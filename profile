@@ -14,6 +14,8 @@ if [ -n "$BASH_VERSION" ]; then
     if [ -f "$HOME/.bashrc" ]; then
 	. "$HOME/.bashrc"
     fi
+    # rotate downloads on login
+    [ -f "$BASHRC/bin/lib/downloads-rotation.sh" ] && . "$BASHRC/bin/lib/downloads-rotation.sh"
 fi
 
 # set PATH so it includes user's private bin if it exists

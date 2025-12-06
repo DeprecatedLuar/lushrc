@@ -45,10 +45,10 @@ source_color() {
 }
 
 # Install fallback order for permanent installs (system first for stability)
-INSTALL_ORDER=(system brew nix cargo uv npm repo sat gh)
+INSTALL_ORDER=(system brew nix cargo uv npm sat gh)
 
 # Install order for sat shell (isolated/user-space first, system before npm)
-SHELL_INSTALL_ORDER=(brew nix cargo uv system npm repo sat)
+SHELL_INSTALL_ORDER=(brew nix cargo uv system npm sat gh)
 
 LUAR="DeprecatedLuar"
 SAT_REPO="the-satellite/main"
@@ -66,7 +66,7 @@ touch "$SAT_MANIFEST" "$SAT_SHELL_MASTER"
 source <(curl -sSL "$SAT_BASE/internal/os_detection.sh")
 
 # System manifest helpers (tool=source)
-manifest_add() { grep -qxF "$1=$2" "$SAT_MANIFEST" 2>/dev/null || echo "$1=$2" >> "$SAT_MANIFEST"; }
+manifest_add() { sed -i "/^$1=/d" "$SAT_MANIFEST" 2>/dev/null; echo "$1=$2" >> "$SAT_MANIFEST"; }
 manifest_get() { grep "^$1=" "$SAT_MANIFEST" 2>/dev/null | cut -d= -f2; }
 manifest_remove() { sed -i "/^$1=/d" "$SAT_MANIFEST"; }
 
@@ -199,15 +199,17 @@ parse_tool_spec() {
         _TOOL_NAME="${spec%%:*}"
         local src="${spec##*:}"
         case "$src" in
-            py|python)   _TOOL_SOURCE="uv" ;;
-            rs|rust)     _TOOL_SOURCE="cargo" ;;
-            js|node)     _TOOL_SOURCE="npm" ;;
-            sys|system)  _TOOL_SOURCE="system" ;;
-            go)          _TOOL_SOURCE="go" ;;
-            brew)        _TOOL_SOURCE="brew" ;;
-            nix)         _TOOL_SOURCE="nix" ;;
-            gh|github)   _TOOL_SOURCE="gh" ;;
-            *)           _TOOL_SOURCE="$src" ;;
+            py|python)       _TOOL_SOURCE="uv" ;;
+            rs|rust)         _TOOL_SOURCE="cargo" ;;
+            js|node)         _TOOL_SOURCE="npm" ;;
+            sys|system)      _TOOL_SOURCE="system" ;;
+            go)              _TOOL_SOURCE="go" ;;
+            brew)            _TOOL_SOURCE="brew" ;;
+            nix)             _TOOL_SOURCE="nix" ;;
+            gh|github)       _TOOL_SOURCE="gh" ;;
+            release|rel)     _TOOL_SOURCE="gh-release" ;;
+            script|sh)       _TOOL_SOURCE="gh-script" ;;
+            *)               _TOOL_SOURCE="$src" ;;
         esac
     else
         _TOOL_NAME="$spec"
@@ -361,7 +363,7 @@ pkg_remove() {
         pacman)  sudo pacman -Rs --noconfirm "$pkg" ;;
         dnf)     sudo dnf remove -y "$pkg" ;;
         pkg)     pkg uninstall -y "$pkg" ;;
-        uv)      uv tool uninstall "$pkg" ;;
+        uv|uv:*|gh)  uv tool uninstall "$pkg" ;;
         cargo)
             # Binary name may differ from crate name - look it up
             crate=$(cargo install --list 2>/dev/null | grep -B1 "^    $pkg\$" | head -1 | cut -d' ' -f1)
@@ -375,9 +377,7 @@ pkg_remove() {
         repo)    rm -f "$HOME/.local/bin/$pkg" ;;
         repo:*)  rm -f "$HOME/.local/bin/$pkg" ;;
         gh:*)
-            local repo="${source#gh:}"
-            source "$SAT_LIB/huber.sh"
-            huber_cmd uninstall "$repo"
+            rm -f "$HOME/.local/bin/$pkg" "$HOME/bin/$pkg" 2>/dev/null
             ;;
         system)  # Generic system - detect package manager
             local mgr=$(get_pkg_manager)
@@ -387,179 +387,6 @@ pkg_remove() {
             ;;
         *)       return 1 ;;
     esac
-}
-
-# === Core Install Functions ===
-
-# Try installing from a specific source (runs synchronously)
-# Returns 0 on success, 1 on failure
-try_source() {
-    local tool="$1" source="$2"
-
-    case "$source" in
-        cargo)
-            command -v cargo &>/dev/null || return 1
-            local err_file="/tmp/sat-cargo-err-$BASHPID"
-
-            # First attempt
-            if cargo install "$tool" >"$err_file" 2>&1; then
-                rm -f "$err_file"
-                return 0
-            fi
-
-            # Check for missing build tools
-            local missing=$(grep -oP "is \`\K[^\`]+(?=\` not installed)" "$err_file" 2>/dev/null)
-            rm -f "$err_file"
-
-            if [[ -n "$missing" ]]; then
-                printf "\r%-50s\r" ""
-                printf "${C_DIM}Build requires %s, installing...${C_RESET}\n" "$missing"
-                local dep_installed=false
-
-                # Try brew first (no sudo)
-                if ! $dep_installed && command -v brew &>/dev/null; then
-                    brew install "$missing" &>/dev/null &
-                    spin_with_style "$missing" $! "brew"
-                    if wait $!; then
-                        printf "\r[${C_CHECK}] %-20s [${C_BREW}brew${C_RESET}] ${C_DIM}(build dep)${C_RESET}\n" "$missing"
-                        dep_installed=true
-                    fi
-                fi
-
-                # Try nix (no sudo)
-                if ! $dep_installed && command -v nix-env &>/dev/null; then
-                    nix-env -iA "nixpkgs.$missing" &>/dev/null &
-                    spin_with_style "$missing" $! "nix"
-                    if wait $!; then
-                        printf "\r[${C_CHECK}] %-20s [${C_NIX}nix${C_RESET}] ${C_DIM}(build dep)${C_RESET}\n" "$missing"
-                        dep_installed=true
-                    fi
-                fi
-
-                # Fall back to system (needs sudo)
-                if ! $dep_installed; then
-                    local mgr=$(get_pkg_manager)
-                    if [[ -n "$mgr" ]] && sudo -v 2>/dev/null; then
-                        pkg_install "$missing" "$mgr" &>/dev/null &
-                        spin_with_style "$missing" $! "system"
-                        if wait $!; then
-                            printf "\r[${C_CHECK}] %-20s [${C_SYSTEM}system${C_RESET}] ${C_DIM}(build dep)${C_RESET}\n" "$missing"
-                            dep_installed=true
-                        fi
-                    fi
-                fi
-
-                # Retry cargo if dep was installed
-                if $dep_installed; then
-                    cargo install "$tool" &>/dev/null
-                    return $?
-                fi
-            fi
-            return 1
-            ;;
-        uv)
-            command -v uv &>/dev/null || return 1
-            uv tool install "$tool" &>/dev/null
-            ;;
-        npm)
-            command -v npm &>/dev/null || return 1
-            npm show "$tool" >/dev/null 2>&1 || return 1
-            npm install -g "$tool" &>/dev/null || return 1
-            command -v "$tool" &>/dev/null  # Verify binary exists
-            ;;
-        go)
-            command -v go &>/dev/null || return 1
-            local go_pkg="$tool"
-            [[ "$go_pkg" != *"."* ]] && go_pkg="github.com/$tool"
-            go install "${go_pkg}@latest" &>/dev/null
-            ;;
-        brew)
-            command -v brew &>/dev/null || return 1
-            brew info "$tool" &>/dev/null 2>&1 || return 1
-            brew install "$tool" &>/dev/null
-            ;;
-        nix)
-            command -v nix-env &>/dev/null || return 1
-            nix-env -iA "nixpkgs.$tool" &>/dev/null
-            ;;
-        system)
-            local mgr=$(get_pkg_manager)
-            [[ -z "$mgr" ]] && return 1
-            pkg_exists "$tool" "$mgr" || return 1
-            pkg_install "$tool" "$mgr" &>/dev/null
-            ;;
-        repo)
-            # Check user's GitHub repo for install.sh
-            local url="https://raw.githubusercontent.com/$LUAR/$tool/main/install.sh"
-            curl -sSL --fail --head "$url" >/dev/null 2>&1 || {
-                url="https://raw.githubusercontent.com/$LUAR/$tool/master/install.sh"
-                curl -sSL --fail --head "$url" >/dev/null 2>&1 || return 1
-            }
-            curl -sSL "$url" | bash &>/dev/null
-            ;;
-        sat)
-            curl -sSL --fail --head "$SAT_BASE/cargo-bay/programs/${tool}.sh" >/dev/null 2>&1 || return 1
-            source <(curl -sSL "$SAT_BASE/internal/fetcher.sh")
-            sat_init && sat_run "$tool" &>/dev/null
-            ;;
-        gh)
-            # Search GitHub for tool, install if Python project
-            command -v uv &>/dev/null || return 1
-            local repo=$(curl -s "https://api.github.com/search/repositories?q=$tool&per_page=1" | jq -r '.items[0].full_name' 2>/dev/null)
-            [[ -z "$repo" || "$repo" == "null" ]] && return 1
-            # Check for Python project markers
-            local has_python=false
-            for file in pyproject.toml setup.py setup.cfg; do
-                if curl -sSL --fail --head "https://raw.githubusercontent.com/$repo/main/$file" >/dev/null 2>&1 ||
-                   curl -sSL --fail --head "https://raw.githubusercontent.com/$repo/master/$file" >/dev/null 2>&1; then
-                    has_python=true
-                    break
-                fi
-            done
-            [[ "$has_python" == false ]] && return 1
-            uv tool install "git+https://github.com/$repo" 2>/dev/null
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-# Bootstrappers - always use sat wrapper (system packages often misconfigured)
-SAT_BOOTSTRAPPERS=(nix homebrew brew rustup)
-
-# Install tool with fallback chain, using spinner
-# Sets global: _INSTALL_SOURCE (source that succeeded)
-# Returns 0 on success, 1 if all sources fail
-install_with_fallback() {
-    local tool="$1"
-    _INSTALL_SOURCE=""
-
-    # Force sat wrapper for bootstrappers
-    local wrapper_name="$tool"
-    for b in "${SAT_BOOTSTRAPPERS[@]}"; do
-        if [[ "$tool" == "$b" ]]; then
-            [[ "$tool" == "brew" ]] && wrapper_name="homebrew"
-            try_source "$wrapper_name" "sat" &
-            spin_with_style "$tool" $! "sat"
-            if wait $!; then
-                _INSTALL_SOURCE="sat"
-                return 0
-            fi
-            return 1
-        fi
-    done
-
-    for source in "${INSTALL_ORDER[@]}"; do
-        try_source "$tool" "$source" &
-        spin_with_style "$tool" $! "$source"
-        if wait $!; then
-            _INSTALL_SOURCE="$source"
-            return 0
-        fi
-    done
-
-    return 1
 }
 
 # =============================================================================

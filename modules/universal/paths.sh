@@ -26,8 +26,11 @@ export GITHUB_USER="DeprecatedLuar"
 export BACKUP="$HOME/Backup"
 export MEDIA="$HOME/Media"
 export DOCUMENTS="$HOME/Documents"
-export DOWNLOADS="$HOME/Downloads"
 export GAMES="$HOME/Games"
+
+# Downloads staging (ephemeral with rotation)
+export DOWNLOADS_STAGE="${XDG_CACHE_HOME:-$HOME/.cache}/downloads"
+export DOWNLOADS="$HOME/Downloads"
 
 # Media subdirectories
 export AUDIO="$MEDIA/Audio"

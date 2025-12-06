@@ -15,6 +15,16 @@ sat_uninstall() {
     for PROGRAM in "$@"; do
         SOURCE=$(manifest_get "$PROGRAM")
         TRACKED=true
+        BINARY="$PROGRAM"
+
+        # If not found directly, search by repo name (for gh:user/repo entries)
+        if [[ -z "$SOURCE" ]]; then
+            local match=$(grep "=gh:.*/${PROGRAM}$" "$SAT_MANIFEST" 2>/dev/null | head -1)
+            if [[ -n "$match" ]]; then
+                BINARY="${match%%=*}"
+                SOURCE="${match#*=}"
+            fi
+        fi
 
         if [[ -z "$SOURCE" ]]; then
             if ! command -v "$PROGRAM" &>/dev/null; then
@@ -29,12 +39,12 @@ sat_uninstall() {
             TRACKED=false
         fi
 
-        printf "Removing %s\n" "$PROGRAM"
-        if pkg_remove "$PROGRAM" "$SOURCE"; then
-            [[ "$TRACKED" == true ]] && manifest_remove "$PROGRAM"
-            status_ok "$PROGRAM removed" "$SOURCE"
+        printf "Removing %s\n" "$BINARY"
+        if pkg_remove "$BINARY" "$SOURCE"; then
+            [[ "$TRACKED" == true ]] && manifest_remove "$BINARY"
+            status_ok "$BINARY removed" "$SOURCE"
         else
-            status_fail "$PROGRAM removal failed"
+            status_fail "$BINARY removal failed"
         fi
     done
     hash -r
@@ -152,12 +162,21 @@ sat_list() {
 sat_scan() {
     echo "Scanning ecosystems..."
 
-    # Directory-based sources (no dep management)
+    # Detect bin directories dynamically (default first, then actual location)
+    local cargo_bin="$HOME/.cargo/bin"
+    [[ ! -d "$cargo_bin" ]] && command -v cargo &>/dev/null && cargo_bin="$(dirname "$(command -v cargo)")"
+
+    local npm_bin="$HOME/.npm-global/bin"
+    [[ ! -d "$npm_bin" ]] && command -v npm &>/dev/null && npm_bin="$(npm root -g 2>/dev/null)/../bin"
+
+    local go_bin="$HOME/go/bin"
+    [[ ! -d "$go_bin" ]] && command -v go &>/dev/null && go_bin="$(go env GOPATH 2>/dev/null)/bin"
+
     declare -A scan_dirs=(
-        ["cargo"]="$HOME/.cargo/bin $BASHRC/dev-tools/cargo/bin"
-        ["npm"]="$BASHRC/dev-tools/npm/bin $HOME/.npm-global/bin"
+        ["cargo"]="$cargo_bin"
+        ["npm"]="$npm_bin"
         ["uv"]="$HOME/.local/share/uv/tools"
-        ["go"]="$HOME/go/bin $BASHRC/dev-tools/go/bin"
+        ["go"]="$go_bin"
     )
 
     is_from_repo() {
@@ -373,6 +392,18 @@ case "$1" in
         done
         ;;
 
+    source|src)
+        [[ -z "$2" ]] && { echo "Usage: sat source <packagemanager>"; exit 1; }
+        SOURCE_SCRIPT="$SAT_BASE/packages/sources/$2.sh"
+        source <(curl -sSL "$SOURCE_SCRIPT") || { echo "Source '$2' not found"; exit 1; }
+        # Try bootstrap function, else _ensure_<name> pattern
+        if declare -f bootstrap &>/dev/null; then
+            bootstrap
+        elif declare -f "_ensure_$2" &>/dev/null; then
+            "_ensure_$2"
+        fi
+        ;;
+
     clone)
         [[ -z "$2" ]] && { echo "Usage: sat clone <repo> [destination]"; exit 1; }
         REPO="$2"
@@ -402,6 +433,8 @@ case "$1" in
             printf "${light}%s${C_RESET} [${color}%s${C_RESET}] ${C_DIM}%s${C_RESET}\n" "$prog" "$display" "$ver"
             echo "  path:   $bin"
             [[ "$real" != "$bin" ]] && echo "  target: $real"
+            # Show repo for gh:user/repo sources
+            [[ "$tracked" == gh:* ]] && echo "  repo:   ${tracked#gh:}"
             [[ -n "$tracked" ]] && echo "  tracked"
 
             # Show shadowed installations
@@ -442,6 +475,7 @@ case "$1" in
 
 Commands:
   install|i <pkg>     - Install package(s) with optional source
+  source|src <pm>     - Install a package manager (huber, cargo, brew, nix)
   search <program>    - Find package across sources (--all raw, --wrap full)
   uninstall|rm <prog> - Remove program installed via sat
   shell <tool>        - Temp shell with tools, auto-cleanup on exit (requires tmux)
