@@ -14,9 +14,9 @@ done
 
 query="$1"
 
-# Debug helper
+# Debug helper - write directly to terminal (bypasses buffering and z-wrapper capture)
 debug() {
-    [[ "$DEBUG" == true ]] && echo "[DEBUG] $*" >&2
+    [[ "$DEBUG" == true ]] && printf "[DEBUG] %s\n" "$*" > /dev/tty
 }
 
 # Check if zoxide is available
@@ -139,24 +139,31 @@ resolve_path_recursive() {
 
 # Find best match using scoring algorithm
 # Scores by: depth (shallow better), length similarity, position, exact substring
-#
-# KNOWN LIMITATION: Performance degrades on remote filesystems (SSHFS, NFS, CIFS)
-# because find traverses directories over the network. Consider reducing maxdepth
-# or detecting remote FS types (fuse.sshfs, nfs, cifs) and using shallower search.
-# For now, use the tool directly on the remote server when working with remote paths.
+# Uses iterative deepening: searches depth 1, then 2, etc., stopping at first match level
 find_best_match() {
     local search_base="$1"
     local query="$2"
 
     debug "find_best_match: searching in '$search_base' for '$query'"
 
-    # Find all matches
+    # Iterative deepening search - try shallow first, only go deeper if needed
     local matches=()
-    while IFS= read -r -d '' match; do
-        matches+=("$match")
-    done < <(find "$search_base" -maxdepth 10 -type d -iname "*$query*" -print0 2>/dev/null)
+    local max_depth=10
 
-    debug "  -> Found ${#matches[@]} candidates"
+    for depth in {1..10}; do
+        debug "  -> Trying depth $depth..."
+        while IFS= read -r -d '' match; do
+            matches+=("$match")
+        done < <(find "$search_base" -maxdepth "$depth" -mindepth "$depth" -type d -iname "*$query*" -print0 2>/dev/null)
+
+        # Found matches at this depth - stop searching deeper
+        if [[ ${#matches[@]} -gt 0 ]]; then
+            debug "  -> Found ${#matches[@]} candidates at depth $depth"
+            break
+        fi
+    done
+
+    debug "  -> Total: ${#matches[@]} candidates"
 
     # No matches
     [[ ${#matches[@]} -eq 0 ]] && return 1
