@@ -20,6 +20,12 @@ if [[ $# -eq 0 ]]; then
     return
 fi
 
+# Handle z - (return to previous directory)
+if [[ "$1" == "-" ]]; then
+    cd -
+    return
+fi
+
 # Resolve path using nav-engine
 target="$($LIBDIR/nav-engine.sh "$1" 2>&1)"
 
