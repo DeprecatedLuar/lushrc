@@ -52,6 +52,9 @@ export FOREIGN="$TOOLS/foreign"
 export HOMEMADE="$TOOLS/homemade"
 export DOCKER_DIR="$TOOLS/docker"
 
+# Script library directory
+export LIBDIR="$BASHRC/bin/lib"
+
 #------------------------ EXTRAS ---------------------------
 
 export QT_QPA_PLATFORMTHEME=qt5ct

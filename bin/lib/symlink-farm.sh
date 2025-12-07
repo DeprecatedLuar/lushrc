@@ -83,3 +83,7 @@ ln -sf "$BASHRC/modules/universal/xdg.sh" "$HOME/.config/user-dirs.dirs"
 
 [ -d "$HOME/.config/fonts" ] && ln -sfn "$HOME/.config/fonts" "$HOME/.local/share/fonts"
 
+#--[NIX APPLICATIONS]-------------------------------
+
+link_contents "$HOME/.nix-profile/share/applications" "$HOME/.local/share/applications"
+

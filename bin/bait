@@ -1,2 +1,15 @@
 #!/usr/bin/env bash
-fd . ~ 2>/dev/null | fzf -q "$1"
+
+# Parse flags
+TYPE_FLAG=""
+while [[ "$1" == -* ]]; do
+    case "$1" in
+        -f|--file) TYPE_FLAG="--type f"; shift ;;
+        -d|--dir|--folder) TYPE_FLAG="--type d"; shift ;;
+        *) echo "bait: unknown flag: $1" >&2; exit 1 ;;
+    esac
+done
+
+query="$1"
+
+fd $TYPE_FLAG "$query" ~ 2>/dev/null | head -1

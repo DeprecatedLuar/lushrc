@@ -11,6 +11,7 @@ PREVIOUS="$DOWNLOADS_STAGE/previous"
 MAX_AGE_MINUTES=1440  # 24 hours
 
 mkdir -p "$DOWNLOADS" "$PREVIOUS"
+ln -sfn "$PREVIOUS" "$DOWNLOADS/.previous"
 
 # Skip if Downloads is empty
 [ -z "$(ls -A "$DOWNLOADS" 2>/dev/null)" ] && return 0

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# wormhole - Create symlinks in common folders to any location found by nav-engine
+
+# Ensure shorthand exists
+ln -sf ~/bin/wormhole ~/bin/wh 2>/dev/null || true
+
+if [[ "$1" == "kill" ]] || [[ "$1" == "close" ]]; then
+    rm -f ~/wormhole ~/Downloads/wormhole ~/Workspace/wormhole ~/Desktop/wormhole
+    exit 0
+fi
+
+if [[ -z "$1" ]]; then
+    target="$PWD"
+else
+    target=$(~/bin/lib/nav-engine.sh "$1") || exit 1
+fi
+
+# Create wormholes in common locations
+ln -sfn "$target" ~/wormhole
+ln -sfn "$target" ~/Downloads/wormhole
+ln -sfn "$target" ~/Workspace/wormhole
+ln -sfn "$target" ~/Desktop/wormhole
+
+echo "$target"

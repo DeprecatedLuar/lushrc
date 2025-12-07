@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# peek - Open directory in file manager using nav-engine for path resolution
+
+query="${1:-.}"
+target="$($LIBDIR/nav-engine.sh "$query")"
+
+if [[ -n "$target" ]]; then
+    $FILEMANAGER "$target" &>/dev/null &
+    disown
+fi

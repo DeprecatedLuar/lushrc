@@ -1,32 +1,51 @@
 #!/usr/bin/env bash
 # tx (taxi) - quick directory navigation and file transport
 
-expand() {
-    case "$1" in
-        w/*)  echo "$WORKSPACE/${1#w/}" ;;
-        t/*)  echo "$TOOLS/${1#t/}" ;;
-        f/*)  echo "$FOREIGN/${1#f/}" ;;
-        h/*)  echo "$HOMEMADE/${1#h/}" ;;
-        c/*)  echo "$HOME/.config/${1#c/}" ;;
-        b/*)  echo "$HOME/bin/${1#b/}" ;;
-        sb/*) echo "/usr/local/bin/${1#sb/}" ;;
-        lb/*) echo "$HOME/.local/bin/${1#lb/}" ;;
-        w)    echo "$WORKSPACE" ;;
-        t)    echo "$TOOLS" ;;
-        f)    echo "$FOREIGN" ;;
-        h)    echo "$HOMEMADE" ;;
-        c)    echo "$HOME/.config" ;;
-        b)    echo "$HOME/bin" ;;
-        sb)   echo "/usr/local/bin" ;;
-        lb)   echo "$HOME/.local/bin" ;;
-        *)    echo "$1" ;;
-    esac
-}
+if [[ $# -ge 2 ]]; then
+    # Move file(s): last arg is destination, all others are sources
+    dest="${!#}"
+    dest_resolved="$($LIBDIR/nav-engine.sh "$dest")" || exit 1
 
-if [[ $# -eq 2 ]]; then
-    mv "$(expand "$1")" "$(expand "$2")"
+    sources=()
+    for ((i=1; i<$#; i++)); do
+        src="${!i}"
+
+        # Handle glob patterns (e.g., d/*, t/foo/*)
+        if [[ "$src" == */* ]] && [[ "$src" =~ [*?] ]] && [[ ! -e "$src" ]]; then
+            base_query="${src%%/*}"
+            pattern="${src#*/}"
+
+            # Resolve base path
+            base_resolved="$($LIBDIR/nav-engine.sh "$base_query")" || exit 1
+
+            # Expand glob in resolved path
+            shopt -s nullglob
+            expanded=("$base_resolved"/$pattern)
+            shopt -u nullglob
+
+            if [[ ${#expanded[@]} -eq 0 ]]; then
+                echo "tx: no matches found for '$src'" >&2
+                exit 1
+            fi
+
+            sources+=("${expanded[@]}")
+        else
+            # Normal path resolution
+            src_resolved="$($LIBDIR/nav-engine.sh "$src")" || exit 1
+            sources+=("$src_resolved")
+        fi
+    done
+
+    mv "${sources[@]}" "$dest_resolved" && echo "→ $dest_resolved"
+
 elif [[ $# -eq 1 ]]; then
-    cd "$(expand "$1")"
+    # Navigate: resolve path and cd
+    target="$($LIBDIR/nav-engine.sh "$1")" || exit 1
+    if cd "$target" && [[ "$OLDPWD" != "$PWD" ]]; then
+        echo "→ $(pwd)"
+    fi
+
 else
+    # No args: show help
     echo "w=workspace t=tools f=foreign h=homemade c=config b=bin sb=sysbin lb=localbin"
 fi

@@ -20,7 +20,7 @@ case "${1:-help}" in
             ln -sf "$bin" "$SYS_BIN/$prog"
             echo "$prog -> $SYS_BIN/"
         done
-        "$BASHRC/bin/lib/reload.sh" -s
+        "$LIBDIR/reload.sh" -s
         ;;
 
     update)

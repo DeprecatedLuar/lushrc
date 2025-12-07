@@ -3,10 +3,10 @@
 
 reload() {
     source ~/.bashrc
-    $BASHRC/bin/lib/reload.sh "$@"
+    $LIBDIR/reload.sh "$@"
 }
 
-alias deploy-noruelga='$BASHRC/bin/lib/noruelga.sh'
+alias deploy-noruelga='$LIBDIR/noruelga.sh'
 
 alias eup='$EDITOR $BASHRC/modules/universal/paths.sh'
 alias eua='$EDITOR $BASHRC/modules/universal/aliases.sh'
