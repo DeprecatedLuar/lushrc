@@ -139,6 +139,11 @@ resolve_path_recursive() {
 
 # Find best match using scoring algorithm
 # Scores by: depth (shallow better), length similarity, position, exact substring
+#
+# KNOWN LIMITATION: Performance degrades on remote filesystems (SSHFS, NFS, CIFS)
+# because find traverses directories over the network. Consider reducing maxdepth
+# or detecting remote FS types (fuse.sshfs, nfs, cifs) and using shallower search.
+# For now, use the tool directly on the remote server when working with remote paths.
 find_best_match() {
     local search_base="$1"
     local query="$2"
@@ -269,7 +274,10 @@ if [[ "$query" == */* ]]; then
 
     # If TX index didn't match, try zoxide or treat as literal path
     if [[ "$base" == "$base_query" ]]; then
-        if [[ "$HAS_ZOXIDE" == true ]]; then
+        # Never feed . or .. to zoxide - treat as literal relative paths
+        if [[ "$base_query" == "." ]] || [[ "$base_query" == ".." ]]; then
+            base="$base_query"
+        elif [[ "$HAS_ZOXIDE" == true ]]; then
             base="$(zoxide query "$base_query" 2>/dev/null)"
             if [[ -z "$base" ]]; then
                 echo "nav-engine: no match found for '$base_query'" >&2
