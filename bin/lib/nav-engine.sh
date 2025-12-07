@@ -41,6 +41,7 @@ expand_index() {
         sb/*) echo "/usr/local/bin/${1#sb/}" ;;
         lb/*) echo "$HOME/.local/bin/${1#lb/}" ;;
         d/*)  echo "$HOME/Downloads/${1#d/}" ;;
+        doc/*) echo "$DOCUMENTS/${1#doc/}" ;;
         w)    echo "$WORKSPACE" ;;
         t)    echo "$TOOLS" ;;
         f)    echo "$FOREIGN" ;;
@@ -50,6 +51,7 @@ expand_index() {
         sb)   echo "/usr/local/bin" ;;
         lb)   echo "$HOME/.local/bin" ;;
         d)    echo "$HOME/Downloads" ;;
+        doc)  echo "$DOCUMENTS" ;;
         *)    echo "$1" ;;
     esac
 }
