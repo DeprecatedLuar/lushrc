@@ -60,7 +60,74 @@ if [[ $# -ge 2 ]]; then
         return 0
     fi
 
-    mv "${sources[@]}" "$dest_resolved" && echo "→ $dest_resolved"
+    mv "${sources[@]}" "$dest_resolved" && {
+        echo "→ $dest_resolved"
+
+        # Save undo data
+        UNDO_DIR="/tmp/tx-undo-$USER"
+        mkdir -p "$UNDO_DIR"
+        printf '%s\n' "${sources[@]}" > "$UNDO_DIR/sources"
+        echo "$dest_resolved" > "$UNDO_DIR/dest"
+    }
+
+elif [[ "$1" == "undo" ]]; then
+    # Undo last move
+    UNDO_DIR="/tmp/tx-undo-$USER"
+
+    if [[ ! -f "$UNDO_DIR/sources" ]] || [[ ! -f "$UNDO_DIR/dest" ]]; then
+        echo "tx: nothing to undo" >&2
+        return 1
+    fi
+
+    # Read undo data
+    mapfile -t undo_sources < "$UNDO_DIR/sources"
+    undo_dest=$(cat "$UNDO_DIR/dest")
+
+    # Build list of items to move back
+    items_to_undo=()
+    targets=()
+    for src in "${undo_sources[@]}"; do
+        item_name=$(basename "$src")
+        item_path="$undo_dest/$item_name"
+        if [[ -e "$item_path" ]]; then
+            items_to_undo+=("$item_path")
+            targets+=("$src")
+        else
+            echo "tx: warning: $item_name not found in $undo_dest" >&2
+        fi
+    done
+
+    if [[ ${#items_to_undo[@]} -eq 0 ]]; then
+        echo "tx: nothing to undo (files not found)" >&2
+        return 1
+    fi
+
+    # Show confirmation
+    echo "Undoing last move:"
+    for item in "${items_to_undo[@]}"; do
+        echo -e "  - \033[34m$(basename "$item")\033[0m"
+    done
+    echo "Back to:"
+    for target in "${targets[@]}"; do
+        echo -e "  \033[33m${target/#$HOME/~}\033[0m"
+    done
+    echo
+    read -p "Y/n: " confirm
+
+    if [[ "$confirm" =~ ^[Nn] ]]; then
+        echo "Cancelled"
+        return 0
+    fi
+
+    # Move items back to original locations
+    for i in "${!items_to_undo[@]}"; do
+        item="${items_to_undo[$i]}"
+        target="${targets[$i]}"
+        mv "$item" "$target" && echo "→ $target"
+    done
+
+    # Clear undo data
+    rm -f "$UNDO_DIR/sources" "$UNDO_DIR/dest"
 
 elif [[ $# -eq 1 ]]; then
     # Navigate: resolve path and cd
