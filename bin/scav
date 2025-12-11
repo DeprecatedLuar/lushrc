@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+# Parse flags (standard Unix: flags before positionals)
+TYPE_FLAG=""
+LIMIT=1
+
+while [[ $# -gt 0 && "$1" == -* ]]; do
+    arg="$1"
+    shift
+
+    # Standalone numeric shortcut: -3, -10, etc
+    if [[ "$arg" =~ ^-[0-9]+$ ]]; then
+        LIMIT="${arg#-}"
+        continue
+    fi
+
+    # Long flags
+    case "$arg" in
+        --file) TYPE_FLAG="--type f"; continue ;;
+        --dir|--folder) TYPE_FLAG="--type d"; continue ;;
+    esac
+
+    # Combined short flags: -fn3, -dn5, etc
+    flags="${arg#-}"
+
+    while [[ -n "$flags" ]]; do
+        flag="${flags:0:1}"
+        flags="${flags:1}"
+
+        case "$flag" in
+            f) TYPE_FLAG="--type f" ;;
+            d) TYPE_FLAG="--type d" ;;
+            n)
+                # -n requires numeric value (attached or next arg)
+                if [[ -n "$flags" ]]; then
+                    LIMIT="$flags"
+                    flags=""
+                elif [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+                    LIMIT="$1"
+                    shift
+                else
+                    echo "scav: -n requires numeric argument" >&2
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "scav: unknown flag: -$flag" >&2
+                exit 1
+                ;;
+        esac
+    done
+done
+
+query="$1"
+
+if [[ -z "$query" ]]; then
+    echo "scav: missing query pattern" >&2
+    exit 1
+fi
+
+fd $TYPE_FLAG "$query" ~ 2>/dev/null | head -n "$LIMIT"

@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# path - Ephemeral PATH management for arbitrary executables
+# Creates double-symlink chain: ~/bin/x* -> /tmp/path/* -> original
+# Auto-cleanup on reboot via /tmp/ wipe + reload's broken link cleanup
+
+set -euo pipefail
+
+PATH_TMP_DIR="/tmp/path"
+USER_BIN="$HOME/bin"
+
+# Ensure /tmp/path exists
+ensure_tmp_dir() {
+    mkdir -p "$PATH_TMP_DIR"
+}
+
+# Add executable to PATH
+add_executable() {
+    local file="$1"
+    local custom_name="${2:-}"
+
+    # Resolve to absolute path
+    if [[ ! -e "$file" ]]; then
+        echo "Error: File not found: $file" >&2
+        exit 1
+    fi
+
+    local abs_path
+    abs_path=$(realpath "$file")
+    local basename
+    basename=$(basename "$abs_path")
+
+    # Use custom name or basename for the x-prefixed symlink
+    local link_name="${custom_name:-$basename}"
+    local tmp_link="$PATH_TMP_DIR/$basename"
+    local bin_link="$USER_BIN/x$link_name"
+
+    ensure_tmp_dir
+
+    # Make executable if not already
+    if [[ ! -x "$abs_path" ]]; then
+        chmod +x "$abs_path" 2>/dev/null || {
+            echo "Warning: Could not make executable: $abs_path" >&2
+        }
+    fi
+
+    # Create symlink in /tmp/path (same name as original)
+    ln -sf "$abs_path" "$tmp_link"
+
+    # Create x-prefixed symlink in ~/bin
+    ln -sf "$tmp_link" "$bin_link"
+
+    echo "Added: x$link_name"
+    echo "  ~/bin/x$link_name -> $tmp_link -> $abs_path"
+}
+
+# Remove executable from PATH
+remove_executable() {
+    local name="$1"
+    local bin_link="$USER_BIN/x$name"
+
+    if [[ ! -L "$bin_link" ]]; then
+        echo "Error: x$name not found in ~/bin" >&2
+        exit 1
+    fi
+
+    # Follow symlink to find tmp location
+    local tmp_link
+    tmp_link=$(readlink "$bin_link")
+
+    # Remove both links
+    rm -f "$bin_link"
+
+    if [[ -L "$tmp_link" ]] || [[ -f "$tmp_link" ]]; then
+        rm -f "$tmp_link"
+    fi
+
+    echo "Removed: x$name"
+}
+
+# Remove all path-managed executables
+remove_all() {
+    local count=0
+
+    # Remove all from /tmp/path
+    if [[ -d "$PATH_TMP_DIR" ]]; then
+        rm -rf "$PATH_TMP_DIR"
+        echo "Cleared: $PATH_TMP_DIR"
+    fi
+
+    # Remove all x* symlinks from ~/bin
+    shopt -s nullglob
+    for link in "$USER_BIN"/x*; do
+        if [[ -L "$link" ]]; then
+            rm -f "$link"
+            count=$((count + 1))
+        fi
+    done
+    shopt -u nullglob
+
+    echo "Removed $count executable(s) from ~/bin"
+}
+
+# List all path-managed executables
+list_executables() {
+    local found=0
+
+    echo "Path-managed executables:"
+    echo ""
+
+    for link in "$USER_BIN"/x*; do
+        if [[ -L "$link" ]]; then
+            found=1
+            local name
+            name=$(basename "$link")
+            local tmp_target
+            tmp_target=$(readlink "$link" 2>/dev/null || echo "<broken>")
+            local final_target="<broken>"
+
+            if [[ -L "$tmp_target" ]]; then
+                final_target=$(readlink "$tmp_target" 2>/dev/null || echo "<broken>")
+            elif [[ -f "$tmp_target" ]]; then
+                final_target="$tmp_target"
+            fi
+
+            echo "  $name"
+            echo "    → $tmp_target"
+            echo "    → $final_target"
+            echo ""
+        fi
+    done
+
+    if [[ $found -eq 0 ]]; then
+        echo "  (none)"
+    fi
+}
+
+# Main command dispatcher
+case "${1:-help}" in
+    add|"")
+        [[ -z "${2:-}" ]] && { echo "Usage: path <executable> [name]"; exit 1; }
+        add_executable "$2" "${3:-}"
+        ;;
+
+    rm|remove)
+        if [[ "${2:-}" == "-a" ]] || [[ "${2:-}" == "--all" ]]; then
+            remove_all
+        elif [[ -z "${2:-}" ]]; then
+            echo "Usage: path rm <name> | path rm -a"
+            exit 1
+        else
+            remove_executable "$2"
+        fi
+        ;;
+
+    ls|list)
+        list_executables
+        ;;
+
+    help|-h|--help)
+        cat << 'EOF'
+path - Ephemeral PATH management
+
+Usage:
+  path <executable> [name]  - Add executable to PATH
+  path rm <name>            - Remove executable
+  path rm -a / --all        - Remove all
+  path ls                   - List managed executables
+  path help                 - Show this message
+
+Examples:
+  path ./build/myapp        - Creates ~/bin/xmyapp
+  path ./script.sh custom   - Creates ~/bin/xcustom
+  path rm myapp             - Removes xmyapp
+  path ls                   - List all x* executables
+
+Architecture:
+  ~/bin/x* -> /tmp/path/* -> original file
+  Auto-cleanup on reboot (reload handles broken links)
+EOF
+        ;;
+
+    *)
+        # Default: treat first arg as file to add
+        add_executable "$1" "${2:-}"
+        ;;
+esac

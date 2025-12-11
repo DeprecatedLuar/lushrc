@@ -3,7 +3,7 @@
 
 # Editor
 export EDITOR="micro"
-export VISUAL="code"
+export VISUAL="micro"
 
 # Browser
 export BROWSER="brave"

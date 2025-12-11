@@ -41,6 +41,7 @@ case "$1" in
   grub)         $action /etc/default/grub ;;
   sources)      $action /etc/apt/sources.list ;;
   profile)      $action /etc/profile ;;
+  xdg)          $action ~/.config/user-dirs.dirs ;;
   nix|nixos)
     nixdir="/etc/nixos"
     case "$2" in
@@ -75,6 +76,7 @@ case "$1" in
     echo "  grub         /etc/default/grub"
     echo "  sources      /etc/apt/sources.list"
     echo "  profile      /etc/profile"
+    echo "  xdg          ~/.config/user-dirs.dirs"
     echo ""
     echo "NixOS (/etc/nixos/):"
     echo "  nix [config]     configuration.nix"
