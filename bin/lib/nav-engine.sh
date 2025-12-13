@@ -23,10 +23,15 @@ debug() {
 HAS_ZOXIDE=false
 command -v zoxide &>/dev/null && HAS_ZOXIDE=true
 
-# Empty query = home directory
-if [[ -z "$query" ]]; then
+# Empty query or ~ = home directory
+if [[ -z "$query" || "$query" == "~" ]]; then
     echo "$HOME"
     exit 0
+fi
+
+# Expand ~/path to $HOME/path
+if [[ "$query" == "~/"* ]]; then
+    query="$HOME/${query#\~/}"
 fi
 
 # TX index expansion

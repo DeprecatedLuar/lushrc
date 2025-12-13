@@ -1,96 +1,145 @@
 #!/usr/bin/env bash
+# yoink - pull files from remote machines via nav-engine
 
 set -euo pipefail
 
 COPY_MODE=false
+SKIP_CONFIRM=false
+NAV_FLAGS=""
 
-if [[ $# -lt 2 ]]; then
-    echo "Usage: yoink [-c|--copy] <filename|pattern> <ssh-host>"
-    echo "Example: yoink myfile.txt parxloid-nuremberg"
-    echo "         yoink G-Crack* parxloid-nuremberg"
-    echo "         yoink ~/backups/data.sql parxloid-nuremberg"
+POSITIONAL=()
+for arg in "$@"; do
+    case "$arg" in
+        -c|--copy) COPY_MODE=true ;;
+        -l|--luck) SKIP_CONFIRM=true ;;
+        --log) NAV_FLAGS="--log" ;;
+        -*|yeet) ;;
+        *) POSITIONAL+=("$arg") ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+if [[ $# -lt 3 ]]; then
+    echo "Usage: yoink [-c] <items...> <host> <path>"
+    echo ""
+    echo "Examples:"
+    echo "  yoink file.txt nuremberg ~           # pull file from home"
+    echo "  yoink *.log backup.db vps d          # pull multiple from Downloads"
+    echo "  yoink -c data.sql server w/backups   # copy (keep remote)"
     echo ""
     echo "Options:"
-    echo "  -c, --copy    Copy file instead of moving (keeps source on remote)"
+    echo "  -c, --copy    Keep source on remote (default: move)"
+    echo "  -l, --luck    Skip confirmation prompt"
+    echo "  --log         Show nav-engine resolution debug info"
     echo ""
-    echo "Searches ~/Workspace/shared/ first, then ~/ as fallback"
-    echo "Supports wildcards for pattern matching"
-    echo "By default, source file is DELETED from remote after transfer"
+    echo "Always pulls to current directory."
+    echo "Resolves remote path via nav-engine."
     exit 1
 fi
 
-if [[ "$1" == "--copy" || "$1" == "-c" ]]; then
-    COPY_MODE=true
-    shift
-fi
+# Last arg is remote path, second-to-last is host, rest are items
+args=("$@")
+REMOTE_PATH_QUERY="${args[-1]}"
+HOST="${args[-2]}"
+ITEMS=("${args[@]:0:$#-2}")
 
-SOURCE_PATH="$1"
-HOST="$2"
-ORIGINAL_DIR=$(pwd)
+# If shell expanded ~ to local $HOME, convert back to ~ for remote
+[[ "$REMOTE_PATH_QUERY" == "$HOME" || "$REMOTE_PATH_QUERY" == "$HOME/"* ]] && REMOTE_PATH_QUERY="~${REMOTE_PATH_QUERY#$HOME}"
 
-if [[ "$SOURCE_PATH" == /* ]] || [[ "$SOURCE_PATH" == ~* ]]; then
-    SEARCH_PATHS=("$SOURCE_PATH")
-else
-    SEARCH_PATHS=("~/Workspace/shared/$SOURCE_PATH" "~/$SOURCE_PATH")
-fi
+# Resolve remote base path via SSH (bootstrap nav-engine)
+REMOTE_PATH=$(cat "$LIBDIR/nav-engine.sh" | ssh "$HOST" "TERM=dumb bash -s -- '$REMOTE_PATH_QUERY'" 2>/dev/null) || {
+    echo "yoink: failed to resolve '$REMOTE_PATH_QUERY' on $HOST" >&2
+    exit 1
+}
 
-TEMP_DIR=$(mktemp -d)
-RSYNC_SUCCESS=false
-FOUND_PATH=""
-RSYNC_PID=""
+if [[ "$SKIP_CONFIRM" == false ]]; then
+    # Check which files exist on remote
+    FOUND_ITEMS=()
+    MISSING_ITEMS=()
+    for item in "${ITEMS[@]}"; do
+        if ssh "$HOST" "test -e '$REMOTE_PATH/$item'" 2>/dev/null; then
+            FOUND_ITEMS+=("$item")
+        else
+            MISSING_ITEMS+=("$item")
+        fi
+    done
 
-cleanup() {
-    if [ -n "$RSYNC_PID" ] && kill -0 $RSYNC_PID 2>/dev/null; then
-        kill $RSYNC_PID 2>/dev/null
-        wait $RSYNC_PID 2>/dev/null
+    if [[ ${#FOUND_ITEMS[@]} -eq 0 ]]; then
+        echo "yoink: no matching files found on $HOST:$REMOTE_PATH" >&2
+        exit 1
     fi
 
-    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
-        rm -rf "$TEMP_DIR"
+    echo "Yoinking:"
+    for item in "${FOUND_ITEMS[@]}"; do
+        echo -e "  - \033[34m$item\033[0m"
+    done
+    for item in "${MISSING_ITEMS[@]}"; do
+        echo -e "  - \033[9;31m$item\033[0m"
+    done
+    echo "From:"
+    echo -e "  \033[1;36m$HOST:$REMOTE_PATH\033[0m"
+    echo
+    read -p "Y/n: " confirm
+
+    if [[ "$confirm" =~ ^[Nn] ]]; then
+        echo "Cancelled"
+        exit 0
+    fi
+
+    # Clear confirmation output (Yoinking: + items + From: + path + empty + Y/n)
+    printf "\033[%dA\033[J" $((${#ITEMS[@]} + 5))
+else
+    # Skip checks, use all items
+    FOUND_ITEMS=("${ITEMS[@]}")
+fi
+
+ITEM_LIST="${FOUND_ITEMS[*]}"
+
+# Transfer
+RSYNC_PID=""
+SUCCESS=false
+
+cleanup() {
+    if [[ -n "${RSYNC_PID:-}" ]] && kill -0 "$RSYNC_PID" 2>/dev/null; then
+        kill "$RSYNC_PID" 2>/dev/null
+        wait "$RSYNC_PID" 2>/dev/null
     fi
 }
 
 trap cleanup INT TERM EXIT
 
 RSYNC_FLAGS="-az"
-if [ "$COPY_MODE" = false ]; then
-    RSYNC_FLAGS="-az --remove-source-files"
-fi
+[[ "$COPY_MODE" == false ]] && RSYNC_FLAGS="-az --remove-source-files"
 
-for REMOTE_PATH in "${SEARCH_PATHS[@]}"; do
-    printf "Yoinking"
-
-    rsync $RSYNC_FLAGS "${HOST}:${REMOTE_PATH}" "$TEMP_DIR/" 2>/dev/null &
-    RSYNC_PID=$!
-
-    DOTS=""
-    while kill -0 $RSYNC_PID 2>/dev/null; do
-        printf "\rYoinking%-3s" "$DOTS"
-        DOTS="${DOTS}."
-        if [ ${#DOTS} -gt 3 ]; then DOTS=""; fi
-        sleep 0.3
-    done
-    wait $RSYNC_PID
-    RSYNC_EXIT=$?
-
-    if [ $RSYNC_EXIT -eq 0 ]; then
-        RSYNC_SUCCESS=true
-        FOUND_PATH="$REMOTE_PATH"
-        break
-    else
-        printf "\r%-20s\r" ""
-    fi
+# Build rsync sources (only found items)
+RSYNC_SOURCES=()
+for item in "${FOUND_ITEMS[@]}"; do
+    RSYNC_SOURCES+=("$HOST:$REMOTE_PATH/$item")
 done
 
-if [ "$RSYNC_SUCCESS" = false ]; then
-    printf "Yoinking failed - pattern not found in searched locations\n"
+printf "Yoinking"
+
+rsync $RSYNC_FLAGS "${RSYNC_SOURCES[@]}" . 2>/dev/null &
+RSYNC_PID=$!
+
+DOTS=""
+while kill -0 "$RSYNC_PID" 2>/dev/null; do
+    printf "\rYoinking%-3s" "$DOTS"
+    DOTS="${DOTS}."
+    [[ ${#DOTS} -gt 3 ]] && DOTS=""
+    sleep 0.3
+done
+wait "$RSYNC_PID"
+RSYNC_EXIT=$?
+
+if [[ $RSYNC_EXIT -ne 0 ]]; then
+    printf "\rYoink failed\n"
     exit 1
 fi
 
-mv "$TEMP_DIR"/* "$ORIGINAL_DIR/" 2>/dev/null
+SUCCESS=true
 
-if [ "$COPY_MODE" = false ]; then
-    printf "\rYoinked from %s:%s\n" "$HOST" "$FOUND_PATH"
-else
-    printf "\rDone            \n"
-fi
+# Clean final output
+printf "\r\033[K"
+printf "Yoinked \033[34m%s\033[0m\n" "$ITEM_LIST"
+printf " \033[1;36m← %s:%s\033[0m\n" "$HOST" "$REMOTE_PATH"

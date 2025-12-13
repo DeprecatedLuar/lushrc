@@ -49,8 +49,10 @@ export NPM_CONFIG_PREFIX="$DEV_HOME/npm"
 export MICRO_TRUECOLOR=1
 
 # Homebrew - Linux package manager
+# System paths first so system Python/tools are default, brew as fallback
 if [ -x "/home/linuxbrew/.linuxbrew/bin/brew" ]; then
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    export PATH="/usr/bin:$PATH"
 fi
 
 # =====================================================
@@ -160,16 +162,22 @@ fi
 # Load all custom configurations
 [ -f "$BASHRC/modules/universal/source.sh" ] && source "$BASHRC/modules/universal/source.sh"
 
-# Cleanup broken symlinks (self-healing)
-find "$HOME" "$HOME/.config" -maxdepth 1 -xtype l -delete 2>/dev/null
-
-
 # Cargo environment now handled in DEVELOPMENT TOOLS CONFIGURATION section above
 umask 002
-command -v starship &>/dev/null && eval "$(starship init bash)"
 
 # Generated for envman. Do not edit.
 [ -s "$HOME/.config/envman/load.sh" ] && source "$HOME/.config/envman/load.sh"
 
 # Qt theme configuration
 export QT_QPA_PLATFORMTHEME=qt5ct
+
+# =====================================================
+# INTERACTIVE ONLY
+# =====================================================
+if [[ $- == *i* ]]; then
+    # Cleanup broken symlinks (self-healing)
+    find "$HOME" "$HOME/.config" -maxdepth 1 -xtype l -delete 2>/dev/null
+
+    # Starship prompt
+    command -v starship &>/dev/null && eval "$(starship init bash)"
+fi

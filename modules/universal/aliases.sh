@@ -11,13 +11,13 @@ alias deploy-noruelga='$LIBDIR/noruelga.sh'
 alias eup='$EDITOR $BASHRC/modules/universal/paths.sh'
 alias eua='$EDITOR $BASHRC/modules/universal/aliases.sh'
 alias el='$EDITOR $BASHRC/modules/local.sh'
-
 alias ed='$EDITOR $BASHRC/modules/defaults/defaults.sh'
-
 alias tx='. $BASHRC/bin/tx'
 
 alias compose='docker-compose'
 alias compose-r='docker-compose down && docker-compose up -d'
+
+alias gpush='git add -A && git commit && git push'
 
 
 # Print install one-liner (for spreading the config)
@@ -42,6 +42,8 @@ fi
 
 # Kitty SSH (better terminal integration)
 alias ksh='kitty +kitten ssh'
+alias fj='$TERMINAL'
+
 
 # Add an "alert" alias for long running commands.  Use like so:
 #   sleep 10; alert
