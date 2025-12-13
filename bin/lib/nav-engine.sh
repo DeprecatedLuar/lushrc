@@ -16,7 +16,31 @@ query="$1"
 
 # Debug helper - write directly to terminal (bypasses buffering and z-wrapper capture)
 debug() {
-    [[ "$DEBUG" == true ]] && printf "[DEBUG] %s\n" "$*" > /dev/tty
+    [[ "$DEBUG" == true ]] && printf "\033[2m[nav] %s\033[0m\n" "$*" > /dev/tty
+}
+
+# Show similar directories as suggestions
+suggest_similar() {
+    local base_dir="$1"
+    local query="$2"
+
+    [[ ! -d "$base_dir" ]] && return
+
+    # Find directories containing the query (case-insensitive)
+    local suggestions=()
+    while IFS= read -r -d '' match; do
+        suggestions+=("${match##*/}")
+    done < <(find "$base_dir" -maxdepth 1 -type d -iname "*$query*" -print0 2>/dev/null)
+
+    # If no substring matches, show all directories as context
+    if [[ ${#suggestions[@]} -eq 0 ]]; then
+        while IFS= read -r dir; do
+            [[ -n "$dir" ]] && suggestions+=("$dir")
+        done < <(ls -1 "$base_dir" 2>/dev/null | head -5)
+        [[ ${#suggestions[@]} -gt 0 ]] && printf "  contents of %s: %s\n" "$base_dir" "${suggestions[*]}" >&2
+    else
+        printf "  did you mean: %s\n" "${suggestions[*]}" >&2
+    fi
 }
 
 # Check if zoxide is available
@@ -173,7 +197,10 @@ find_best_match() {
     debug "  -> Total: ${#matches[@]} candidates"
 
     # No matches
-    [[ ${#matches[@]} -eq 0 ]] && return 1
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        debug "  -> No matches found for '$query' in '$search_base'"
+        return 1
+    fi
 
     # Single match - easy
     if [[ ${#matches[@]} -eq 1 ]]; then
@@ -244,11 +271,12 @@ if [[ "$query" == /* ]]; then
     # Find longest existing prefix by walking backwards from the full path
     test_path="$query"
     while [[ ! -d "$test_path" && "$test_path" != "/" ]]; do
+        debug "  '$test_path' not a directory, walking back..."
         test_path="${test_path%/*}"
         [[ -z "$test_path" ]] && test_path="/"
     done
 
-    debug "Last existing directory: $test_path"
+    debug "Existing base: $test_path"
 
     # Extract suffix to resolve
     if [[ "$test_path" == "/" ]]; then
@@ -274,7 +302,14 @@ if [[ "$query" == /* ]]; then
         exit 0
     fi
 
+    # Failed - show helpful context
     echo "nav-engine: no match found for '$query'" >&2
+    debug "  base resolved to: $test_path"
+    debug "  failed to resolve suffix: $suffix"
+
+    # Extract the first component that failed and suggest alternatives
+    first_missing="${suffix%%/*}"
+    suggest_similar "$test_path" "$first_missing"
     exit 1
 fi
 
@@ -308,6 +343,7 @@ if [[ "$query" == */* ]]; then
     fi
 
     # Use recursive resolution for the suffix
+    debug "Resolving '$suffix' from base '$base'"
     target=$(resolve_path_recursive "$base" "$suffix")
 
     if [[ -n "$target" ]]; then
@@ -315,8 +351,20 @@ if [[ "$query" == */* ]]; then
         exit 0
     else
         echo "nav-engine: no match found for '$query'" >&2
+        first_missing="${suffix%%/*}"
+        suggest_similar "$base" "$first_missing"
         exit 1
     fi
+fi
+
+# Try current directory match (case-insensitive) for simple queries
+shopt -s nocaseglob nullglob
+local_matches=("$query"/)
+shopt -u nocaseglob nullglob
+
+if [[ ${#local_matches[@]} -gt 0 && -d "${local_matches[0]}" ]]; then
+    echo "$PWD/${local_matches[0]%/}"
+    exit 0
 fi
 
 # Try TX index expansion for simple queries (no path separator)
@@ -328,15 +376,19 @@ fi
 
 # Try zoxide if available, otherwise fail gracefully
 if [[ "$HAS_ZOXIDE" == true ]]; then
+    debug "Trying zoxide for '$query'"
     target="$(zoxide query "$query" 2>/dev/null)"
     if [[ -n "$target" ]]; then
         echo "$target"
         exit 0
     else
         echo "nav-engine: no match found for '$query'" >&2
+        # Show what's in current directory as context
+        suggest_similar "$PWD" "$query"
         exit 1
     fi
 else
     echo "nav-engine: cannot resolve '$query' (zoxide not installed, use TX indices or paths)" >&2
+    suggest_similar "$PWD" "$query"
     exit 1
 fi

@@ -24,10 +24,20 @@ case "${1:-help}" in
         ;;
 
     update)
-        echo "Updating lushrc..."
         cd "$BASHRC" || exit 1
+
+        # Check for local changes
+        if ! git diff --quiet HEAD 2>/dev/null; then
+            echo "Local changes detected:"
+            git status --short
+            echo
+            read -rp "Discard changes and update? [y/N] " answer
+            [[ "$answer" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
+            git reset --hard HEAD
+        fi
+
         git pull
-        echo "Run 'reload' to apply changes"
+        "$LIBDIR/reload.sh"
         ;;
 
     status)

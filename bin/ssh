@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# ssh wrapper - adds --password flag and enables password prompts from non-interactive shells
+# Uses kitten ssh for interactive sessions if available (better terminal integration)
+
+if [[ -t 0 ]] && command -v kitten &>/dev/null; then
+    REAL_SSH="kitten ssh"
+else
+    REAL_SSH=/usr/bin/ssh
+fi
+
+# Parse --password flag (can appear anywhere in args)
+PASSWORD=""
+ARGS=()
+SKIP_NEXT=false
+
+for arg in "$@"; do
+    if $SKIP_NEXT; then
+        PASSWORD="$arg"
+        SKIP_NEXT=false
+        continue
+    fi
+    case "$arg" in
+        -P|--password) SKIP_NEXT=true ;;
+        --password=*) PASSWORD="${arg#--password=}" ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+
+if [[ -n "$PASSWORD" ]]; then
+    if ! command -v sshpass &>/dev/null; then
+        echo "ssh: --password requires sshpass (apt install sshpass)" >&2
+        exit 1
+    fi
+    exec sshpass -p "$PASSWORD" "$REAL_SSH" "${ARGS[@]}"
+fi
+
+# Set up askpass for non-interactive shells to prompt on user's terminal
+export SSH_ASKPASS="${LIBDIR:-$HOME/.config/lushrc/bin/lib}/ssh-askpass"
+export SSH_ASKPASS_REQUIRE=prefer
+
+exec "$REAL_SSH" "$@"

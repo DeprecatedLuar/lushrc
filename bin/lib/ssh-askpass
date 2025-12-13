@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# ssh-askpass - prompts for password on the user's actual terminal
+# Used by SSH_ASKPASS to enable password prompts from non-interactive shells
+
+exec < /dev/tty 2> /dev/tty
+
+read -rsp "${1:-Password: } " pass
+echo >&2
+echo "$pass"
