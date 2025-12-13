@@ -7,7 +7,7 @@ DEBUG=false
 while [[ "$1" == --* ]]; do
     case "$1" in
         --dry-run) shift ;;  # nav-engine already just prints paths
-        --log) DEBUG=true; shift ;;
+        --log|--debug) DEBUG=true; shift ;;
         *) shift ;;
     esac
 done
@@ -26,11 +26,16 @@ suggest_similar() {
 
     [[ ! -d "$base_dir" ]] && return
 
-    # Find directories containing the query (case-insensitive)
+    # Find directories containing the query (case-insensitive glob)
     local suggestions=()
-    while IFS= read -r -d '' match; do
-        suggestions+=("${match##*/}")
-    done < <(find "$base_dir" -maxdepth 1 -type d -iname "*$query*" -print0 2>/dev/null)
+    shopt -s nocaseglob nullglob
+    local glob_matches=("$base_dir"/*"$query"*/)
+    shopt -u nocaseglob nullglob
+
+    for match in "${glob_matches[@]}"; do
+        suggestions+=("${match%/}")  # Remove trailing slash
+        suggestions[-1]="${suggestions[-1]##*/}"  # Keep only basename
+    done
 
     # If no substring matches, show all directories as context
     if [[ ${#suggestions[@]} -eq 0 ]]; then
@@ -177,22 +182,35 @@ find_best_match() {
 
     debug "find_best_match: searching in '$search_base' for '$query'"
 
-    # Iterative deepening search - try shallow first, only go deeper if needed
     local matches=()
-    local max_depth=10
 
-    for depth in {1..10}; do
-        debug "  -> Trying depth $depth..."
-        while IFS= read -r -d '' match; do
-            matches+=("$match")
-        done < <(find "$search_base" -maxdepth "$depth" -mindepth "$depth" -type d -iname "*$query*" -print0 2>/dev/null)
+    # Fast path: try glob first (works better with permissions, faster than find)
+    shopt -s nocaseglob nullglob
+    local glob_matches=("$search_base"/*"$query"*/)
+    shopt -u nocaseglob nullglob
 
-        # Found matches at this depth - stop searching deeper
-        if [[ ${#matches[@]} -gt 0 ]]; then
-            debug "  -> Found ${#matches[@]} candidates at depth $depth"
-            break
-        fi
-    done
+    if [[ ${#glob_matches[@]} -gt 0 ]]; then
+        debug "  -> Glob found ${#glob_matches[@]} matches at depth 1"
+        for match in "${glob_matches[@]}"; do
+            # Remove trailing slash from glob
+            matches+=("${match%/}")
+        done
+    else
+        # Glob failed - fall back to iterative find for deeper searches
+        debug "  -> Glob found nothing, trying find..."
+        for depth in {1..10}; do
+            debug "  -> Trying depth $depth..."
+            while IFS= read -r -d '' match; do
+                matches+=("$match")
+            done < <(find "$search_base" -maxdepth "$depth" -mindepth "$depth" -type d -iname "*$query*" -print0 2>/dev/null)
+
+            # Found matches at this depth - stop searching deeper
+            if [[ ${#matches[@]} -gt 0 ]]; then
+                debug "  -> Found ${#matches[@]} candidates at depth $depth"
+                break
+            fi
+        done
+    fi
 
     debug "  -> Total: ${#matches[@]} candidates"
 
