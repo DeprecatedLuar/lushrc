@@ -173,9 +173,32 @@ resolve_path_recursive() {
     return 1
 }
 
+# Glob-based directory search (handles permissions better than find)
+glob_search() {
+    local base="$1" query="$2" max_depth="${3:-3}"
+    shopt -s nocaseglob nullglob
+
+    for ((d=1; d<=max_depth; d++)); do
+        local pattern="$base"
+        for ((i=1; i<d; i++)); do pattern+="/*"; done
+        pattern+="/*$query*/"
+
+        debug "  -> Glob depth $d: ${pattern##$base/}"
+        local results=($pattern)
+
+        if [[ ${#results[@]} -gt 0 ]]; then
+            shopt -u nocaseglob nullglob
+            printf '%s\n' "${results[@]%/}"
+            return 0
+        fi
+    done
+
+    shopt -u nocaseglob nullglob
+    return 1
+}
+
 # Find best match using scoring algorithm
 # Scores by: depth (shallow better), length similarity, position, exact substring
-# Uses iterative deepening: searches depth 1, then 2, etc., stopping at first match level
 find_best_match() {
     local search_base="$1"
     local query="$2"
@@ -184,27 +207,22 @@ find_best_match() {
 
     local matches=()
 
-    # Fast path: try glob first (works better with permissions, faster than find)
-    shopt -s nocaseglob nullglob
-    local glob_matches=("$search_base"/*"$query"*/)
-    shopt -u nocaseglob nullglob
+    # Try glob first (depths 1-3, handles permissions better)
+    while IFS= read -r match; do
+        matches+=("$match")
+    done < <(glob_search "$search_base" "$query" 3)
 
-    if [[ ${#glob_matches[@]} -gt 0 ]]; then
-        debug "  -> Glob found ${#glob_matches[@]} matches at depth 1"
-        for match in "${glob_matches[@]}"; do
-            # Remove trailing slash from glob
-            matches+=("${match%/}")
-        done
+    if [[ ${#matches[@]} -gt 0 ]]; then
+        debug "  -> Glob found ${#matches[@]} matches"
     else
-        # Glob failed - fall back to iterative find for deeper searches
-        debug "  -> Glob found nothing, trying find..."
-        for depth in {1..10}; do
-            debug "  -> Trying depth $depth..."
+        # Glob failed - fall back to find for deeper searches
+        debug "  -> Glob found nothing, trying find (depth 4-10)..."
+        for depth in {4..10}; do
+            debug "  -> Find depth $depth..."
             while IFS= read -r -d '' match; do
                 matches+=("$match")
             done < <(find "$search_base" -maxdepth "$depth" -mindepth "$depth" -type d -iname "*$query*" -print0 2>/dev/null)
 
-            # Found matches at this depth - stop searching deeper
             if [[ ${#matches[@]} -gt 0 ]]; then
                 debug "  -> Found ${#matches[@]} candidates at depth $depth"
                 break

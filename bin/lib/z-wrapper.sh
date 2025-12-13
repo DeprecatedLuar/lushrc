@@ -11,7 +11,7 @@ while [[ "$1" == --* || "$1" == "-q" ]]; do
             dry_run=true
             shift
             ;;
-        --log)
+        --log|--debug)
             flags+=("$1")
             shift
             ;;
