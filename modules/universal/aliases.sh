@@ -8,17 +8,21 @@ reload() {
 
 alias deploy-noruelga='$LIBDIR/noruelga.sh'
 
+alias e='$EDITOR'
+alias edit='$EDITOR'
 alias eup='$EDITOR $BASHRC/modules/universal/paths.sh'
 alias eua='$EDITOR $BASHRC/modules/universal/aliases.sh'
 alias el='$EDITOR $BASHRC/modules/local.sh'
 alias ed='$EDITOR $BASHRC/modules/defaults/defaults.sh'
 alias tx='. $BASHRC/bin/tx'
+alias wh='wormhole'
+alias vch='vibecheck'
 
 alias compose='docker-compose'
 alias compose-r='docker-compose down && docker-compose up -d'
 
 alias gpush='git add -A && git commit && git push'
-
+alias venv='souce ./venv/bin/activate'
 
 # Print install one-liner (for spreading the config)
 alias mitosis='echo "curl -fsSL https://raw.githubusercontent.com/DeprecatedLuar/lushrc/main/install.sh | bash"'

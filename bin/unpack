@@ -32,10 +32,14 @@ case "$ARCHIVE_NAME" in
   *.txz) BASE_NAME="${ARCHIVE_NAME%.txz}" ;;
   *.tar) BASE_NAME="${ARCHIVE_NAME%.tar}" ;;
   *.zip) BASE_NAME="${ARCHIVE_NAME%.zip}" ;;
+  *.bacpac) BASE_NAME="${ARCHIVE_NAME%.bacpac}" ;;
+  *.kra) BASE_NAME="${ARCHIVE_NAME%.kra}" ;;
   *.7z) BASE_NAME="${ARCHIVE_NAME%.7z}" ;;
+  *.iso) BASE_NAME="${ARCHIVE_NAME%.iso}" ;;
   *.rar) BASE_NAME="${ARCHIVE_NAME%.rar}" ;;
   *.gz) BASE_NAME="${ARCHIVE_NAME%.gz}" ;;
   *.bz2) BASE_NAME="${ARCHIVE_NAME%.bz2}" ;;
+  *.xz) BASE_NAME="${ARCHIVE_NAME%.xz}" ;;
   *) BASE_NAME="${ARCHIVE_NAME}" ;;
 esac
 
@@ -102,10 +106,10 @@ case "$ARCHIVE" in
   *.tar)
     tar xf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
     ;;
-  *.zip)
+  *.zip|*.bacpac|*.kra)
     unzip -q "$ARCHIVE" -d "$TEMP_EXTRACT_DIR" &
     ;;
-  *.7z)
+  *.7z|*.iso)
     7z x -bd -o"$TEMP_EXTRACT_DIR" "$ARCHIVE" > /dev/null &
     ;;
   *.rar)
@@ -125,9 +129,16 @@ case "$ARCHIVE" in
       bunzip2 -c "$ARCHIVE" > "$TEMP_EXTRACT_DIR/${ARCHIVE_NAME%.bz2}" &
     fi
     ;;
+  *.xz)
+    if [ "$KEEP_ORIGINAL" = true ]; then
+      xz -d -k -c "$ARCHIVE" > "$TEMP_EXTRACT_DIR/${ARCHIVE_NAME%.xz}" &
+    else
+      xz -d -c "$ARCHIVE" > "$TEMP_EXTRACT_DIR/${ARCHIVE_NAME%.xz}" &
+    fi
+    ;;
   *)
     echo "Error: Unknown archive format: $ARCHIVE"
-    echo "Supported formats: .tar.gz, .tar.bz2, .tar.xz, .tar, .zip, .7z, .rar, .gz, .bz2"
+    echo "Supported formats: .tar.gz, .tar.bz2, .tar.xz, .tar, .zip, .bacpac, .kra, .7z, .iso, .rar, .gz, .bz2, .xz"
     exit 1
     ;;
 esac

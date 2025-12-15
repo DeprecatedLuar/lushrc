@@ -1,14 +1,38 @@
 #!/usr/bin/env bash
-# wormhole - Create symlinks in common folders to any location found by nav-engine
-
-# Ensure shorthand exists
-ln -sf ~/bin/wormhole ~/bin/wh 2>/dev/null || true
+# wormhole - Nav-engine powered symlink wrapper
 
 if [[ "$1" == "kill" ]] || [[ "$1" == "close" ]]; then
     rm -f ~/wormhole ~/Downloads/wormhole ~/Workspace/wormhole ~/Desktop/wormhole
     exit 0
 fi
 
+# Two-arg mode: custom symlink from source to dest
+if [[ -n "$2" ]]; then
+    # Resolve source to absolute path
+    if [[ -e "$1" ]]; then
+        source_path=$(realpath "$1")
+    else
+        source_path=$(~/bin/lib/nav-engine.sh "$1") || exit 1
+    fi
+
+    # Resolve destination
+    dest_path=$(~/bin/lib/nav-engine.sh "$2") || exit 1
+
+    # Determine final symlink path
+    if [[ -d "$dest_path" ]]; then
+        # Dest is a directory, use basename of source
+        link_path="$dest_path/$(basename "$source_path")"
+    else
+        # Use dest path as-is (for custom naming)
+        link_path="$dest_path"
+    fi
+
+    ln -sfn "$source_path" "$link_path"
+    echo "$link_path → $source_path"
+    exit 0
+fi
+
+# One-arg or no-arg mode: create wormholes to common locations
 if [[ -z "$1" ]]; then
     target="$PWD"
 else
