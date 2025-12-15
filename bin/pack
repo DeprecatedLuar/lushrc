@@ -1,27 +1,37 @@
 #!/usr/bin/env bash
 # pack - Universal archive creator
 
-FORMAT="tar.gz"
 KEEP_ORIGINAL=false
 TARGET=""
+FORMAT=""
 
 for arg in "$@"; do
   case "$arg" in
     -c|--copy)
       KEEP_ORIGINAL=true
       ;;
-    --zip)
-      FORMAT="zip"
-      ;;
     -*)
       echo "Error: Unknown option: $arg"
       exit 1
       ;;
+    .*)
+      if [ -e "$arg" ]; then
+        if [ -z "$TARGET" ]; then
+          TARGET="$arg"
+        else
+          FORMAT="$arg"
+        fi
+      else
+        FORMAT="$arg"
+      fi
+      ;;
     *)
       if [ -z "$TARGET" ]; then
         TARGET="$arg"
+      elif [ -z "$FORMAT" ]; then
+        FORMAT="$arg"
       else
-        echo "Error: Multiple targets specified"
+        echo "Error: Too many arguments"
         exit 1
       fi
       ;;
@@ -29,9 +39,18 @@ for arg in "$@"; do
 done
 
 if [ -z "$TARGET" ]; then
-  echo "Usage: pack [-c|--copy] [--zip] <file_or_folder>"
+  echo "Usage: pack [-c] <file_or_folder> [.extension]"
   echo "  -c, --copy    Keep original file/folder (default: remove)"
-  echo "  --zip         Create zip archive (default: tar.gz)"
+  echo ""
+  echo "Supported formats:"
+  echo "  .tar.gz, .tgz       Gzip compressed tar (default)"
+  echo "  .tar.bz2, .tbz2     Bzip2 compressed tar"
+  echo "  .tar.xz, .txz       XZ compressed tar"
+  echo "  .tar                Uncompressed tar"
+  echo "  .zip                ZIP archive"
+  echo "  .bacpac             ZIP (SQL Server format)"
+  echo "  .kra                ZIP (Krita format)"
+  echo "  .7z                 7-Zip archive"
   exit 1
 fi
 
@@ -39,18 +58,39 @@ if [ ! -e "$TARGET" ]; then
   echo "Error: File or folder not found: $TARGET"
   exit 1
 fi
+
+if [ -z "$FORMAT" ]; then
+  FORMAT=".tar.gz"
+fi
+
+FORMAT="${FORMAT#.}"
+
 BASENAME=$(basename "$TARGET")
 ORIGINAL_DIR=$(pwd)
+OUTPUT="${BASENAME}.${FORMAT}"
 
 case "$FORMAT" in
-  tar.gz)
-    OUTPUT="${BASENAME}.tar.gz"
+  tar.gz|tgz)
+    PACK_CMD="tar czf"
     ;;
-  zip)
-    OUTPUT="${BASENAME}.zip"
+  tar.bz2|tbz2)
+    PACK_CMD="tar cjf"
+    ;;
+  tar.xz|txz)
+    PACK_CMD="tar cJf"
+    ;;
+  tar)
+    PACK_CMD="tar cf"
+    ;;
+  zip|bacpac|kra)
+    PACK_CMD="zip"
+    ;;
+  7z)
+    PACK_CMD="7z"
     ;;
   *)
-    echo "Error: Unknown format: $FORMAT"
+    echo "Error: Unsupported format: .$FORMAT"
+    echo "Run 'pack' without arguments to see supported formats"
     exit 1
     ;;
 esac
@@ -85,12 +125,15 @@ fi
 
 printf "Packing"
 
-case "$FORMAT" in
-  tar.gz)
-    tar czf "$ORIGINAL_DIR/$OUTPUT" -C "$(dirname "$TARGET")" "$(basename "$TARGET")" &
+case "$PACK_CMD" in
+  tar*)
+    $PACK_CMD "$ORIGINAL_DIR/$OUTPUT" -C "$(dirname "$TARGET")" "$(basename "$TARGET")" &
     ;;
   zip)
     (cd "$(dirname "$TARGET")" && zip -rq "$ORIGINAL_DIR/$OUTPUT" "$(basename "$TARGET")") &
+    ;;
+  7z)
+    (cd "$(dirname "$TARGET")" && 7z a -bd "$ORIGINAL_DIR/$OUTPUT" "$(basename "$TARGET")" > /dev/null) &
     ;;
 esac
 
