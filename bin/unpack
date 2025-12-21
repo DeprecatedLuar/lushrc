@@ -1,16 +1,38 @@
 #!/usr/bin/env bash
 # unpack - Universal archive extractor
 
-KEEP_ORIGINAL=false
+check_dependency() {
+  local tool=$1
+  if ! command -v "$tool" &> /dev/null; then
+    echo "Error: '$tool' is required but not installed"
+    exit 1
+  fi
+}
 
-if [ "$1" = "-c" ]; then
-  KEEP_ORIGINAL=true
-  shift
-fi
+KEEP_ORIGINAL=false
+DEBUG=false
+
+while [[ "$1" == -* ]]; do
+  case "$1" in
+    -c|--copy)
+      KEEP_ORIGINAL=true
+      shift
+      ;;
+    --debug)
+      DEBUG=true
+      shift
+      ;;
+    *)
+      echo "Error: Unknown option: $1"
+      exit 1
+      ;;
+  esac
+done
 
 if [ -z "$1" ]; then
-  echo "Usage: unpack [-c] <archive_file>"
-  echo "  -c  Keep original archive file (copy mode)"
+  echo "Usage: unpack [-c] [--debug] <archive_file>"
+  echo "  -c, --copy  Keep original archive file (copy mode)"
+  echo "  --debug     Show debug information"
   exit 1
 fi
 
@@ -21,27 +43,48 @@ fi
 
 ARCHIVE="$1"
 ARCHIVE_NAME=$(basename "$ARCHIVE")
+IS_SPLIT=false
+
+if [[ "$ARCHIVE_NAME" == *.aa ]]; then
+  BASE_NAME="${ARCHIVE_NAME%.aa}"
+  case "$BASE_NAME" in
+    *.tar.gz|*.tgz|*.tar.bz2|*.tbz2|*.tar.xz|*.txz|*.tar)
+      IS_SPLIT=true
+      SPLIT_PATTERN="${ARCHIVE%.aa}.a?"
+      if [ "$DEBUG" = true ]; then
+        echo "[DEBUG] Split archive detected"
+        echo "[DEBUG] Base name: $BASE_NAME"
+        echo "[DEBUG] Split pattern: $SPLIT_PATTERN"
+        echo "[DEBUG] Matching files:"
+        ls -1 $SPLIT_PATTERN 2>&1 | head -10
+        echo "[DEBUG] Total parts: $(ls -1 $SPLIT_PATTERN 2>/dev/null | wc -l)"
+      fi
+      ;;
+  esac
+fi
 ORIGINAL_DIR=$(pwd)
 
-case "$ARCHIVE_NAME" in
-  *.tar.gz) BASE_NAME="${ARCHIVE_NAME%.tar.gz}" ;;
-  *.tgz) BASE_NAME="${ARCHIVE_NAME%.tgz}" ;;
-  *.tar.bz2) BASE_NAME="${ARCHIVE_NAME%.tar.bz2}" ;;
-  *.tbz2) BASE_NAME="${ARCHIVE_NAME%.tbz2}" ;;
-  *.tar.xz) BASE_NAME="${ARCHIVE_NAME%.tar.xz}" ;;
-  *.txz) BASE_NAME="${ARCHIVE_NAME%.txz}" ;;
-  *.tar) BASE_NAME="${ARCHIVE_NAME%.tar}" ;;
-  *.zip) BASE_NAME="${ARCHIVE_NAME%.zip}" ;;
-  *.bacpac) BASE_NAME="${ARCHIVE_NAME%.bacpac}" ;;
-  *.kra) BASE_NAME="${ARCHIVE_NAME%.kra}" ;;
-  *.7z) BASE_NAME="${ARCHIVE_NAME%.7z}" ;;
-  *.iso) BASE_NAME="${ARCHIVE_NAME%.iso}" ;;
-  *.rar) BASE_NAME="${ARCHIVE_NAME%.rar}" ;;
-  *.gz) BASE_NAME="${ARCHIVE_NAME%.gz}" ;;
-  *.bz2) BASE_NAME="${ARCHIVE_NAME%.bz2}" ;;
-  *.xz) BASE_NAME="${ARCHIVE_NAME%.xz}" ;;
-  *) BASE_NAME="${ARCHIVE_NAME}" ;;
-esac
+if [ "$IS_SPLIT" = false ]; then
+  case "$ARCHIVE_NAME" in
+    *.tar.gz) BASE_NAME="${ARCHIVE_NAME%.tar.gz}" ;;
+    *.tgz) BASE_NAME="${ARCHIVE_NAME%.tgz}" ;;
+    *.tar.bz2) BASE_NAME="${ARCHIVE_NAME%.tar.bz2}" ;;
+    *.tbz2) BASE_NAME="${ARCHIVE_NAME%.tbz2}" ;;
+    *.tar.xz) BASE_NAME="${ARCHIVE_NAME%.tar.xz}" ;;
+    *.txz) BASE_NAME="${ARCHIVE_NAME%.txz}" ;;
+    *.tar) BASE_NAME="${ARCHIVE_NAME%.tar}" ;;
+    *.zip) BASE_NAME="${ARCHIVE_NAME%.zip}" ;;
+    *.bacpac) BASE_NAME="${ARCHIVE_NAME%.bacpac}" ;;
+    *.kra) BASE_NAME="${ARCHIVE_NAME%.kra}" ;;
+    *.7z) BASE_NAME="${ARCHIVE_NAME%.7z}" ;;
+    *.iso) BASE_NAME="${ARCHIVE_NAME%.iso}" ;;
+    *.rar) BASE_NAME="${ARCHIVE_NAME%.rar}" ;;
+    *.gz) BASE_NAME="${ARCHIVE_NAME%.gz}" ;;
+    *.bz2) BASE_NAME="${ARCHIVE_NAME%.bz2}" ;;
+    *.xz) BASE_NAME="${ARCHIVE_NAME%.xz}" ;;
+    *) BASE_NAME="${ARCHIVE_NAME}" ;;
+  esac
+fi
 
 TEMP_ARCHIVE_DIR=""
 TEMP_EXTRACT_DIR=$(mktemp -d)
@@ -78,7 +121,7 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
-if [ "$KEEP_ORIGINAL" = false ]; then
+if [ "$KEEP_ORIGINAL" = false ] && [ "$IS_SPLIT" = false ]; then
     TEMP_ARCHIVE_DIR=$(mktemp -d)
     TEMP_ARCHIVE="$TEMP_ARCHIVE_DIR/$ARCHIVE_NAME"
     mv "$ARCHIVE" "$TEMP_ARCHIVE"
@@ -93,29 +136,62 @@ fi
 
 printf "Unpacking"
 
-case "$ARCHIVE" in
-  *.tar.gz|*.tgz)
-    tar xzf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
-    ;;
-  *.tar.bz2|*.tbz2)
-    tar xjf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
-    ;;
-  *.tar.xz|*.txz)
-    tar xJf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
-    ;;
-  *.tar)
-    tar xf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
-    ;;
+if [ "$IS_SPLIT" = true ]; then
+  check_dependency "tar"
+  check_dependency "cat"
+
+  BASE_ARCHIVE="${ARCHIVE%.aa}"
+  case "$BASE_ARCHIVE" in
+    *.tar.gz|*.tgz)
+      (cat $SPLIT_PATTERN | tar xzf - -C "$TEMP_EXTRACT_DIR") &
+      ;;
+    *.tar.bz2|*.tbz2)
+      (cat $SPLIT_PATTERN | tar xjf - -C "$TEMP_EXTRACT_DIR") &
+      ;;
+    *.tar.xz|*.txz)
+      (cat $SPLIT_PATTERN | tar xJf - -C "$TEMP_EXTRACT_DIR") &
+      ;;
+    *.tar)
+      (cat $SPLIT_PATTERN | tar xf - -C "$TEMP_EXTRACT_DIR") &
+      ;;
+  esac
+else
+  case "$ARCHIVE" in
+    *.tar.gz|*.tgz)
+      check_dependency "tar"
+      tar xzf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
+      ;;
+    *.tar.bz2|*.tbz2)
+      check_dependency "tar"
+      tar xjf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
+      ;;
+    *.tar.xz|*.txz)
+      check_dependency "tar"
+      tar xJf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
+      ;;
+    *.tar)
+      check_dependency "tar"
+      tar xf "$ARCHIVE" -C "$TEMP_EXTRACT_DIR" &
+      ;;
+esac
+fi
+
+if [ "$IS_SPLIT" = false ]; then
+  case "$ARCHIVE" in
   *.zip|*.bacpac|*.kra)
+    check_dependency "unzip"
     unzip -q "$ARCHIVE" -d "$TEMP_EXTRACT_DIR" &
     ;;
   *.7z|*.iso)
+    check_dependency "7z"
     7z x -bd -o"$TEMP_EXTRACT_DIR" "$ARCHIVE" > /dev/null &
     ;;
   *.rar)
+    check_dependency "unrar"
     unrar x -inul "$ARCHIVE" "$TEMP_EXTRACT_DIR/" &
     ;;
   *.gz)
+    check_dependency "gzip"
     if [ "$KEEP_ORIGINAL" = true ]; then
       gunzip -k -c "$ARCHIVE" > "$TEMP_EXTRACT_DIR/${ARCHIVE_NAME%.gz}" &
     else
@@ -123,6 +199,7 @@ case "$ARCHIVE" in
     fi
     ;;
   *.bz2)
+    check_dependency "bzip2"
     if [ "$KEEP_ORIGINAL" = true ]; then
       bunzip2 -k -c "$ARCHIVE" > "$TEMP_EXTRACT_DIR/${ARCHIVE_NAME%.bz2}" &
     else
@@ -130,18 +207,20 @@ case "$ARCHIVE" in
     fi
     ;;
   *.xz)
+    check_dependency "xz"
     if [ "$KEEP_ORIGINAL" = true ]; then
       xz -d -k -c "$ARCHIVE" > "$TEMP_EXTRACT_DIR/${ARCHIVE_NAME%.xz}" &
     else
       xz -d -c "$ARCHIVE" > "$TEMP_EXTRACT_DIR/${ARCHIVE_NAME%.xz}" &
     fi
     ;;
-  *)
-    echo "Error: Unknown archive format: $ARCHIVE"
-    echo "Supported formats: .tar.gz, .tar.bz2, .tar.xz, .tar, .zip, .bacpac, .kra, .7z, .iso, .rar, .gz, .bz2, .xz"
-    exit 1
-    ;;
-esac
+    *)
+      echo "Error: Unknown archive format: $ARCHIVE"
+      echo "Supported formats: .tar.gz, .tar.bz2, .tar.xz, .tar, .zip, .bacpac, .kra, .7z, .iso, .rar, .gz, .bz2, .xz"
+      exit 1
+      ;;
+  esac
+fi
 
 UNPACK_PID=$!
 DOTS=""
@@ -179,4 +258,9 @@ else
 fi
 
 SUCCESS=true
+
+if [ "$IS_SPLIT" = true ] && [ "$KEEP_ORIGINAL" = false ]; then
+    rm -f $SPLIT_PATTERN
+fi
+
 printf "\rDone          \n"

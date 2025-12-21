@@ -22,7 +22,7 @@ alias compose='docker-compose'
 alias compose-r='docker-compose down && docker-compose up -d'
 
 alias gpush='git add -A && git commit && git push'
-alias venv='souce ./venv/bin/activate'
+alias venv='source ./venv/bin/activate'
 
 # Print install one-liner (for spreading the config)
 alias mitosis='echo "curl -fsSL https://raw.githubusercontent.com/DeprecatedLuar/lushrc/main/install.sh | bash"'

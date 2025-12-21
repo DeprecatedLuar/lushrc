@@ -394,12 +394,9 @@ if [[ "$query" == */* ]]; then
 fi
 
 # Try current directory match (case-insensitive) for simple queries
-shopt -s nocaseglob nullglob
-local_matches=("$query"/)
-shopt -u nocaseglob nullglob
-
-if [[ ${#local_matches[@]} -gt 0 && -d "${local_matches[0]}" ]]; then
-    echo "$PWD/${local_matches[0]%/}"
+local_match=$(find . -maxdepth 1 -type d -iname "$query" -print -quit 2>/dev/null)
+if [[ -n "$local_match" ]]; then
+    echo "$PWD/${local_match#./}"
     exit 0
 fi
 
