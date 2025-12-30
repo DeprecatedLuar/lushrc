@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# fpk - Simple flatpak launcher by suffix
+
+ALIAS_FILE="$BASHRC/modules/local.sh"
+
+list_apps() {
+    flatpak list --app --columns=application | sort
+}
+
+get_suffix() {
+    echo "$1" | awk -F. '{print $NF}'
+}
+
+init_aliases() {
+    local aliases=""
+    local begin_marker="# BEGIN fpk aliases"
+    local end_marker="# END fpk aliases"
+
+    # Generate alias lines
+    while read -r app; do
+        suffix=$(get_suffix "$app")
+        suffix_lower="${suffix,,}"
+        aliases+="alias ${suffix_lower}='flatpak run ${app}'"$'\n'
+    done < <(list_apps)
+
+    # Create new alias block
+    local new_block="${begin_marker}"$'\n'"${aliases}${end_marker}"
+
+    # Remove old block if exists, then append new one
+    if [[ -f "$ALIAS_FILE" ]]; then
+        sed -i "/^${begin_marker}/,/^${end_marker}/d" "$ALIAS_FILE"
+    fi
+
+    echo "" >> "$ALIAS_FILE"
+    echo "$new_block" >> "$ALIAS_FILE"
+
+    echo "Generated $(echo "$aliases" | grep -c alias) flatpak aliases in $ALIAS_FILE"
+}
+
+if [[ -z "$1" ]]; then
+    # No args: list all suffixes (lowercase)
+    list_apps | while read -r app; do
+        suffix=$(get_suffix "$app")
+        echo "${suffix,,}"
+    done | sort -u
+    exit 0
+fi
+
+# Handle init subcommand
+if [[ "$1" == "init" ]]; then
+    init_aliases
+    exit 0
+fi
+
+# Search for matching app (case-insensitive)
+target="${1,,}"  # Convert to lowercase
+match=""
+
+while read -r app; do
+    suffix=$(get_suffix "$app")
+    if [[ "${suffix,,}" == "$target" ]]; then
+        if [[ -n "$match" ]]; then
+            echo "Error: Multiple matches found:"
+            echo "  $match"
+            echo "  $app"
+            exit 1
+        fi
+        match="$app"
+    fi
+done < <(list_apps)
+
+if [[ -z "$match" ]]; then
+    echo "Error: No flatpak found matching '$1'"
+    exit 1
+fi
+
+# Run the matched flatpak
+shift
+exec flatpak run "$match" "$@"

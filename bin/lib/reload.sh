@@ -18,12 +18,6 @@ chmod +x $HOME/bin/sys/* 2>/dev/null || true
 source "$LIBDIR/symlink-farm.sh"
 ln -sf "$BASHRC/modules/defaults/mimeapps.list" "$HOME/.config/mimeapps.list"
 
-#--[CLEANUP BROKEN SYMLINKS]--------------------
-
-find "$HOME/bin" -maxdepth 1 -xtype l -delete 2>/dev/null || true
-find "$HOME/bin/lib" -maxdepth 1 -xtype l -delete 2>/dev/null || true
-find "$HOME/bin/sys" -maxdepth 1 -xtype l -delete 2>/dev/null || true
-
 #--[KILL WORMHOLES]-----------------------------
 
 wormhole kill 2>/dev/null || true

@@ -4,6 +4,17 @@
 # Source once - ensures entire symlink farm is correct
 # Skips gracefully if directories don't exist
 
+#--[CLEANUP]------------------------------------
+
+cleanup_broken_links() {
+    local dirs=("$HOME/bin" "$HOME/bin/lib" "$HOME/bin/sys" "$HOME/.local/share" "$HOME/.local/bin")
+    for dir in "${dirs[@]}"; do
+        find "$dir" -maxdepth 1 -xtype l -delete 2>/dev/null || true
+    done
+}
+
+cleanup_broken_links
+
 #--[UTILITIES]----------------------------------
 
 setup_sys() {
@@ -86,4 +97,10 @@ ln -sf "$BASHRC/modules/universal/xdg.sh" "$HOME/.config/user-dirs.dirs"
 #--[NIX APPLICATIONS]-------------------------------
 
 link_contents "$HOME/.nix-profile/share/applications" "$HOME/.local/share/applications"
+
+#--[WALLPAPERS]----------------------------------
+
+for subdir in "$XDG_PICTURES_DIR/wallpapers"/*/; do
+    link_contents "$subdir" "$XDG_PICTURES_DIR/wallpapers"
+done
 

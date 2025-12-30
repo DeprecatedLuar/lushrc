@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 SESSION="hotline"
-INPUT_SCRIPT="${ROFI_INPUT_SCRIPT:-$HOME/.config/dots/config/rofi/applets/input-text/input-text.sh}"
+INPUT_SCRIPT="${ROFI_INPUT_SCRIPT:-$HOME/.config/lushrc/bin/lib/input/input-text.sh}"
 HOTLINE_HISTORY="/tmp/hotline_history"
 
 auto_clean() {
@@ -265,6 +265,12 @@ cmd_input() {
     if ! command -v rofi &>/dev/null; then
         echo "rofi not found" >&2
         exit 1
+    fi
+
+    # Toggle: if rofi is running, kill it
+    if pgrep -x rofi >/dev/null; then
+        pkill -x rofi
+        exit 0
     fi
 
     local input

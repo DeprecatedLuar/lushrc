@@ -66,27 +66,35 @@ fi
 # TX index expansion
 expand_index() {
     case "$1" in
-        w/*)  echo "$WORKSPACE/${1#w/}" ;;
-        t/*)  echo "$TOOLS/${1#t/}" ;;
-        f/*)  echo "$FOREIGN/${1#f/}" ;;
-        h/*)  echo "$HOMEMADE/${1#h/}" ;;
-        c/*)  echo "$HOME/.config/${1#c/}" ;;
-        b/*)  echo "$HOME/bin/${1#b/}" ;;
-        sb/*) echo "/usr/local/bin/${1#sb/}" ;;
-        lb/*) echo "$HOME/.local/bin/${1#lb/}" ;;
-        d/*)  echo "$HOME/Downloads/${1#d/}" ;;
+        w/*)   echo "$WORKSPACE/${1#w/}" ;;
+        t/*)   echo "$TOOLS/${1#t/}" ;;
+        f/*)   echo "$FOREIGN/${1#f/}" ;;
+        h/*)   echo "$HOMEMADE/${1#h/}" ;;
+        c/*)   echo "$HOME/.config/${1#c/}" ;;
+        b/*)   echo "$HOME/bin/${1#b/}" ;;
+        sb/*)  echo "/usr/local/bin/${1#sb/}" ;;
+        lb/*)  echo "$HOME/.local/bin/${1#lb/}" ;;
+        d/*)   echo "$HOME/Downloads/${1#d/}" ;;
         doc/*) echo "$DOCUMENTS/${1#doc/}" ;;
-        w)    echo "$WORKSPACE" ;;
-        t)    echo "$TOOLS" ;;
-        f)    echo "$FOREIGN" ;;
-        h)    echo "$HOMEMADE" ;;
-        c)    echo "$HOME/.config" ;;
-        b)    echo "$HOME/bin" ;;
-        sb)   echo "/usr/local/bin" ;;
-        lb)   echo "$HOME/.local/bin" ;;
-        d)    echo "$HOME/Downloads" ;;
-        doc)  echo "$DOCUMENTS" ;;
-        *)    echo "$1" ;;
+        pic/*) echo "${XDG_PICTURES_DIR:-$HOME/Pictures}/${1#pic/}" ;;
+        vid/*) echo "${XDG_VIDEOS_DIR:-$HOME/Videos}/${1#vid/}" ;;
+        l/*)   echo "$HOME/.local/${1#l/}" ;;
+        etc/*) echo "/etc/${1#etc/}" ;;
+        w)     echo "$WORKSPACE" ;;
+        t)     echo "$TOOLS" ;;
+        f)     echo "$FOREIGN" ;;
+        h)     echo "$HOMEMADE" ;;
+        c)     echo "$HOME/.config" ;;
+        b)     echo "$HOME/bin" ;;
+        sb)    echo "/usr/local/bin" ;;
+        lb)    echo "$HOME/.local/bin" ;;
+        d)     echo "$HOME/Downloads" ;;
+        doc)   echo "$DOCUMENTS" ;;
+        pic)   echo "${XDG_PICTURES_DIR:-$HOME/Pictures}" ;;
+        vid)   echo "${XDG_VIDEOS_DIR:-$HOME/Videos}" ;;
+        l)     echo "$HOME/.local" ;;
+        etc)   echo "/etc" ;;
+        *)     echo "$1" ;;
     esac
 }
 
