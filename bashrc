@@ -28,11 +28,6 @@ shopt -s histappend
 HISTSIZE=1000
 HISTFILESIZE=2000
 
-# Logout functionality - clear console on exit for privacy (login shells)
-if [[ $SHLVL -eq 1 ]]; then
-    trap 'clear_console -q 2>/dev/null || clear' EXIT
-fi
-
 # =====================================================
 # DEVELOPMENT TOOLS CONFIGURATION
 # =====================================================
@@ -177,6 +172,11 @@ export QT_QPA_PLATFORMTHEME=qt5ct
 if [[ $- == *i* ]]; then
     # Cleanup broken symlinks (self-healing)
     find "$HOME" "$HOME/.config" -maxdepth 1 -xtype l -delete 2>/dev/null
+
+    # Logout functionality - clear console on exit for privacy (login shells)
+    if [[ $SHLVL -eq 1 ]]; then
+        trap 'clear_console -q 2>/dev/null || clear' EXIT
+    fi
 
     # Starship prompt
     command -v starship &>/dev/null && eval "$(starship init bash)"
