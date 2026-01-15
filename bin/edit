@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# edit - Open files with nav-engine path resolution
+
+if [[ -z "$1" ]]; then
+  echo "Usage: edit <path>"
+  echo "  edit c/hypr/hyprland.conf"
+  echo "  edit w/project/src/main.rs"
+  exit 1
+fi
+
+path="$1"
+
+# If path has no directory component, just open it directly
+if [[ "$path" != */* ]]; then
+  ${EDITOR:-vim} "$path"
+  exit $?
+fi
+
+# Split into directory and filename
+dir="${path%/*}"
+file="${path##*/}"
+
+# Resolve directory through nav-engine
+resolved_dir=$("$LIBDIR/nav-engine.sh" "$dir")
+
+if [[ $? -ne 0 || -z "$resolved_dir" ]]; then
+  echo "edit: failed to resolve path '$dir'"
+  exit 1
+fi
+
+target="$resolved_dir/$file"
+
+if [[ ! -e "$target" ]]; then
+  echo "edit: file not found: $target"
+  exit 1
+fi
+
+${EDITOR:-vim} "$target"

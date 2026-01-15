@@ -87,8 +87,30 @@ case "$1" in
     echo "  nix <name>       <name>.nix"
     ;;
   *)
-    echo "Unknown config: $1"
-    echo "Run 'conf --help' for available configs"
-    exit 1
+    query="$1"
+    found=""
+
+    # Fallback 1: fuzzy search in ~/.config/ (maxdepth 3)
+    if [[ -z "$found" ]]; then
+      found=$(find -L ~/.config -maxdepth 3 -type f -iname "*$query*" 2>/dev/null | head -1)
+    fi
+
+    # Fallback 2: dotfiles in ~/ (~/.<query>*)
+    if [[ -z "$found" ]]; then
+      shopt -s nullglob
+      dotfiles=(~/."$query"*)
+      shopt -u nullglob
+      for f in "${dotfiles[@]}"; do
+        [[ -f "$f" ]] && { found="$f"; break; }
+      done
+    fi
+
+    if [[ -n "$found" ]]; then
+      $action "$found"
+    else
+      echo "conf: no config found for '$query'"
+      echo "Run 'conf --help' for known shortcuts"
+      exit 1
+    fi
     ;;
 esac

@@ -8,6 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Installation**: One-liner bootstrap via curl | bash, self-updates via Git.
 
+## Quick Reference
+
+```bash
+reload              # Apply changes to shell config
+lush status         # Check git status of lushrc
+lush update         # Pull latest changes
+hotline help        # Command launcher help
+```
+
 ## Architecture
 
 ### Configuration Loading Pipeline
@@ -96,14 +105,19 @@ Multi-source package manager wrapper:
 ## Key Utilities
 
 ### Command Launcher (hotline)
-Tmux-based rofi launcher with multiple modes:
-- **Normal**: Run, capture output, notify
-- **hold**: Keep pane open for interactive commands
-- **mute**: Silent execution
-- **dial**: Prompt for input via rofi
-- **sudo**: Password prompt via rofi
+CLI-first tmux-based command runner. Rofi serves as optional GUI input.
 
-History: `/tmp/hotline_history` with `!!` expansion
+```bash
+hotline <cmd>       # Execute command (captures output, notifies)
+hotline hold <cmd>  # Keep pane open after completion
+hotline mute <cmd>  # Silent execution
+hotline dial <cmd>  # Prompt for input, pipe to command
+hotline sudo <cmd>  # Password prompt via rofi
+hotline pickup      # Attach to tmux session
+hotline             # Open rofi prompt (GUI entry)
+```
+
+History: `/tmp/hotline_history` with `!!` and `!-N` expansion
 
 ### File Operations
 - **pack/unpack**: Universal archive handling (tar, zip, 7z, etc.)

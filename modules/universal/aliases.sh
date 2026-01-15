@@ -9,7 +9,6 @@ reload() {
 alias deploy-noruelga='$LIBDIR/noruelga.sh'
 
 alias e='$EDITOR'
-alias edit='$EDITOR'
 alias launcher='$LAUNCHER'
 alias lc='$LAUNCHER'
 alias files='$FILEMANAGER'
