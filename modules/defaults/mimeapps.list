@@ -2,11 +2,11 @@
 application/json=org.gnome.gedit.desktop;
 application/x-shellscript=org.gnome.FileRoller.desktop;
 inode/directory=code.desktop;org.gnome.baobab.desktop;
-application/pdf=brave-browser.desktop;
+application/pdf=org.pwmt.zathura-pdf-mupdf.desktop;writer.desktop;brave-browser.desktop;
 text/csv=brave-browser.desktop;
 application/x-executable=brave-browser.desktop;
 image/png=org.xfce.ristretto.desktop;com.github.maoschanz.drawing.desktop;gimp.desktop;org.gnome.gThumb.desktop;
-video/mp4=io.github.celluloid_player.Celluloid.desktop;
+video/mp4=mpv.desktop;io.github.celluloid_player.Celluloid.desktop;
 image/webp=org.gnome.eog.desktop;org.gnome.gThumb.desktop;
 image/heif=org.gnome.eog.desktop;
 video/3gp=io.github.celluloid_player.Celluloid.desktop;
@@ -114,6 +114,7 @@ application/x-extension-shtml=firefox.desktop;
 application/xhtml+xml=firefox.desktop;
 application/x-extension-xhtml=firefox.desktop;
 application/x-extension-xht=firefox.desktop;
+image/jpeg=org.kde.krita.desktop;pinta.desktop;
 
 [Default Applications]
 text/html=firefox.desktop

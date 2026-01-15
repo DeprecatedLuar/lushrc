@@ -108,6 +108,22 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
+# Check for required tools based on conversion type
+case "$CONVERSION" in
+    video→audio|video→video|audio→audio)
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+            echo "Error: ffmpeg not found"
+            echo ""
+            echo "On NixOS, install with:"
+            echo "  environment.systemPackages = with pkgs; [ ffmpeg ];"
+            echo ""
+            echo "Or run temporarily with:"
+            echo "  nix-shell -p ffmpeg --run 'tranz $*'"
+            exit 1
+        fi
+        ;;
+esac
+
 printf "Converting"
 
 # Delegate to appropriate tool based on conversion type

@@ -51,7 +51,7 @@ fi
 # Kitty SSH (better terminal integration)
 alias ksh='kitty +kitten ssh'
 alias fj='$TERMINAL'
-
+alias offload='nvidia-offload'
 
 # Add an "alert" alias for long running commands.  Use like so:
 #   sleep 10; alert

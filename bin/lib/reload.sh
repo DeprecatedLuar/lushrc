@@ -18,10 +18,6 @@ chmod +x $HOME/bin/sys/* 2>/dev/null || true
 source "$LIBDIR/symlink-farm.sh"
 ln -sf "$BASHRC/modules/defaults/mimeapps.list" "$HOME/.config/mimeapps.list"
 
-#--[KILL WORMHOLES]-----------------------------
-
-wormhole kill 2>/dev/null || true
-
 #--[SYSTEM-LEVEL SYNC]-------------------------
 
 if [[ "$1" == "--system" ]] || [[ "$1" == "-s" ]] || [[ "$1" == "--hard" ]] || [[ "$1" == "-h" ]]; then
