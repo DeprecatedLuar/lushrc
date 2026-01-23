@@ -115,6 +115,7 @@ application/xhtml+xml=firefox.desktop;
 application/x-extension-xhtml=firefox.desktop;
 application/x-extension-xht=firefox.desktop;
 image/jpeg=org.kde.krita.desktop;pinta.desktop;
+image/gif=mpv.desktop;feh.desktop;
 
 [Default Applications]
 text/html=firefox.desktop
