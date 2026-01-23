@@ -3,9 +3,11 @@
 
 # Parse flags
 NAV_FLAGS=""
-while [[ "$1" == --* ]]; do
+COPY_MODE=""
+while [[ "$1" == -* ]]; do
     case "$1" in
         --log) NAV_FLAGS="--log"; shift ;;
+        -c|--copy) COPY_MODE=1; shift ;;
         *) shift ;;
     esac
 done
@@ -46,7 +48,8 @@ if [[ $# -ge 2 ]]; then
     done
 
     # Show confirmation prompt
-    echo "Moving:"
+    [[ -n "$COPY_MODE" ]] && action="Copying" || action="Moving"
+    echo "$action:"
     for src in "${sources[@]}"; do
         echo -e "  - \033[34m$(basename "$src")\033[0m"
     done
@@ -60,22 +63,33 @@ if [[ $# -ge 2 ]]; then
         return 0
     fi
 
-    # Clear confirmation output (Moving: + sources + To: + path + empty + Y/n)
+    # Clear confirmation output (action: + sources + To: + path + empty + Y/n)
     printf "\033[%dA\033[J" $((${#sources[@]} + 5))
 
-    mv "${sources[@]}" "$dest_resolved" && {
-        # Clean final output
+    if [[ -n "$COPY_MODE" ]]; then
+        cp -r "${sources[@]}" "$dest_resolved"
+        cmd_ok=$?
+        past="Copied"
+    else
+        mv "${sources[@]}" "$dest_resolved"
+        cmd_ok=$?
+        past="Moved"
+    fi
+
+    if [[ $cmd_ok -eq 0 ]]; then
         names=()
         for src in "${sources[@]}"; do names+=("$(basename "$src")"); done
-        printf "Moved \033[34m%s\033[0m\n" "${names[*]}"
+        printf "$past \033[34m%s\033[0m\n" "${names[*]}"
         printf " \033[1;36m→ %s\033[0m\n" "${dest_resolved/#$HOME/\~}"
 
-        # Save undo data
-        UNDO_DIR="/tmp/tx-undo-$USER"
-        mkdir -p "$UNDO_DIR"
-        printf '%s\n' "${sources[@]}" > "$UNDO_DIR/sources"
-        echo "$dest_resolved" > "$UNDO_DIR/dest"
-    }
+        # Save undo data (only for moves)
+        if [[ -z "$COPY_MODE" ]]; then
+            UNDO_DIR="/tmp/tx-undo-$USER"
+            mkdir -p "$UNDO_DIR"
+            printf '%s\n' "${sources[@]}" > "$UNDO_DIR/sources"
+            echo "$dest_resolved" > "$UNDO_DIR/dest"
+        fi
+    fi
 
 elif [[ "$1" == "undo" ]]; then
     # Undo last move
@@ -151,5 +165,8 @@ elif [[ $# -eq 1 ]]; then
 
 else
     # No args: show help
-    echo "w=workspace t=tools f=foreign h=homemade c=config b=bin sb=sysbin lb=localbin"
+    echo "tx <path>            Navigate (cd via nav-engine)"
+    echo "tx <files> <dest>    Move files (with undo)"
+    echo "tx -c <files> <dest> Copy files"
+    echo "tx undo              Reverse last move"
 fi
