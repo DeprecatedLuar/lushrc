@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# pw - path wrapper: resolve file/directory paths via nav-engine
+# Usage: pw c/lushrc/bashrc              # print resolved path
+#        pw cat c/lushrc/bashrc          # run: cat <resolved>
+#        cat $(pw c/lushrc/bashrc)       # inline substitution
+#        pw grep -rn "pattern" c/lushrc  # flags and non-paths pass through
+
+# Check if argument looks like a resolvable path (must contain /)
+is_path_like() {
+    [[ "$1" == */* ]]
+}
+
+args=()
+for arg in "$@"; do
+    if is_path_like "$arg"; then
+        resolved=$("$LIBDIR/nav-engine.sh" -f "$arg" 2>/dev/null) && args+=("$resolved") || args+=("$arg")
+    else
+        args+=("$arg")
+    fi
+done
+
+# If first arg is a command, execute; otherwise print resolved paths
+if command -v "${args[0]}" &>/dev/null; then
+    exec "${args[@]}"
+else
+    printf '%s\n' "${args[@]}"
+fi

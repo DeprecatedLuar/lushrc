@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # nav-engine - Universal navigation path resolver
-# Resolves queries using TX indices, zoxide (optional), fuzzy search, and path expansion
+# Resolves queries using nav indices, zoxide (optional), fuzzy search, and path expansion
 
 # Parse flags
 DEBUG=false
-while [[ "$1" == --* ]]; do
+FILE_MODE=false
+while [[ "$1" == -* ]]; do
     case "$1" in
         --dry-run) shift ;;  # nav-engine already just prints paths
         --log|--debug) DEBUG=true; shift ;;
+        -f|--file) FILE_MODE=true; shift ;;
         *) shift ;;
     esac
 done
@@ -63,7 +65,7 @@ if [[ "$query" == "~/"* ]]; then
     query="$HOME/${query#\~/}"
 fi
 
-# TX index expansion
+# Nav index expansion
 expand_index() {
     case "$1" in
         w/*)   echo "$WORKSPACE/${1#w/}" ;;
@@ -124,7 +126,7 @@ resolve_path_recursive() {
     local exact_matches=("$current_base"/$remaining_suffix)
     shopt -u nocaseglob
 
-    if [[ -d "${exact_matches[0]}" ]]; then
+    if [[ -d "${exact_matches[0]}" ]] || { [[ "$FILE_MODE" == true ]] && [[ -e "${exact_matches[0]}" ]]; }; then
         debug "  -> Exact match found: ${exact_matches[0]}"
         echo "${exact_matches[0]}"
         return 0
@@ -164,7 +166,7 @@ resolve_path_recursive() {
     local target_matches=("$resolved_parent"/$target)
     shopt -u nocaseglob
 
-    if [[ -d "${target_matches[0]}" ]]; then
+    if [[ -d "${target_matches[0]}" ]] || { [[ "$FILE_MODE" == true ]] && [[ -e "${target_matches[0]}" ]]; }; then
         echo "${target_matches[0]}"
         return 0
     fi
@@ -189,10 +191,20 @@ glob_search() {
     for ((d=1; d<=max_depth; d++)); do
         local pattern="$base"
         for ((i=1; i<d; i++)); do pattern+="/*"; done
-        pattern+="/*$query*/"
 
-        debug "  -> Glob depth $d: ${pattern##$base/}"
-        local results=($pattern)
+        # Directory glob (always)
+        local dir_pattern="${pattern}/*${query}*/"
+        debug "  -> Glob depth $d: ${dir_pattern##$base/}"
+        local results=($dir_pattern)
+
+        # File glob (only in file mode)
+        if [[ "$FILE_MODE" == true ]]; then
+            local file_pattern="${pattern}/*${query}*"
+            local file_results=($file_pattern)
+            for f in "${file_results[@]}"; do
+                [[ -f "$f" ]] && results+=("$f")
+            done
+        fi
 
         if [[ ${#results[@]} -gt 0 ]]; then
             shopt -u nocaseglob nullglob
@@ -225,11 +237,13 @@ find_best_match() {
     else
         # Glob failed - fall back to find for deeper searches
         debug "  -> Glob found nothing, trying find (depth 4-10)..."
+        local find_type=(-type d)
+        [[ "$FILE_MODE" == true ]] && find_type=(\( -type d -o -type f \))
         for depth in {4..10}; do
             debug "  -> Find depth $depth..."
             while IFS= read -r -d '' match; do
                 matches+=("$match")
-            done < <(find "$search_base" -maxdepth "$depth" -mindepth "$depth" -type d -iname "*$query*" -print0 2>/dev/null)
+            done < <(find "$search_base" -maxdepth "$depth" -mindepth "$depth" "${find_type[@]}" -iname "*$query*" -print0 2>/dev/null)
 
             if [[ ${#matches[@]} -gt 0 ]]; then
                 debug "  -> Found ${#matches[@]} candidates at depth $depth"
@@ -357,15 +371,15 @@ if [[ "$query" == /* ]]; then
     exit 1
 fi
 
-# Handle queries with path separators (TX indices, zoxide base + path suffix)
+# Handle queries with path separators (nav indices, zoxide base + path suffix)
 if [[ "$query" == */* ]]; then
     base_query="${query%%/*}"
     suffix="${query#*/}"
 
-    # Try TX index expansion on base first
+    # Try nav index expansion on base first
     base="$(expand_index "$base_query")"
 
-    # If TX index didn't match, try zoxide or treat as literal path
+    # If nav index didn't match, try zoxide or treat as literal path
     if [[ "$base" == "$base_query" ]]; then
         # Never feed . or .. to zoxide - treat as literal relative paths
         if [[ "$base_query" == "." ]] || [[ "$base_query" == ".." ]]; then
@@ -408,7 +422,7 @@ if [[ -n "$local_match" ]]; then
     exit 0
 fi
 
-# Try TX index expansion for simple queries (no path separator)
+# Try nav index expansion for simple queries (no path separator)
 expanded="$(expand_index "$query")"
 if [[ "$expanded" != "$query" ]]; then
     echo "$expanded"
@@ -429,7 +443,7 @@ if [[ "$HAS_ZOXIDE" == true ]]; then
         exit 1
     fi
 else
-    echo "nav-engine: cannot resolve '$query' (zoxide not installed, use TX indices or paths)" >&2
+    echo "nav-engine: cannot resolve '$query' (zoxide not installed, use nav indices or paths)" >&2
     suggest_similar "$PWD" "$query"
     exit 1
 fi

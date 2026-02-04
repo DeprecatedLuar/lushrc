@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# stk - Steam game launcher with auto-generated wrapper scripts
+# kettle - Steam game launcher with auto-generated wrapper scripts
 
-WRAPPER_DIR="$HOME/.local/share/stk/wrappers"
+WRAPPER_DIR="$HOME/.local/share/kettle/wrappers"
 SYMLINK_DIR="$HOME/.local/bin"
 
 # Auto-detect Steam installation
@@ -45,11 +45,13 @@ list_games() {
     done | sort -t'|' -k2
 }
 
-# Generate initials from name
+# Generate initials from name (returns empty if single-char)
 get_initials() {
     local name="$1"
     # Remove apostrophes and special chars, split on spaces, take first letter of each word
-    echo "$name" | tr -d "'" | sed 's/[^a-zA-Z0-9 ]//g' | awk '{for(i=1;i<=NF;i++) printf tolower(substr($i,1,1))}'
+    local initials=$(echo "$name" | tr -d "'" | sed 's/[^a-zA-Z0-9 ]//g' | awk '{for(i=1;i<=NF;i++) printf tolower(substr($i,1,1))}')
+    # Only return if 2+ chars (single-word games don't need aliases)
+    [[ ${#initials} -ge 2 ]] && echo "$initials"
 }
 
 # Generate slug from name
@@ -69,7 +71,7 @@ create_wrapper() {
     # Create wrapper script
     cat > "$wrapper_path" <<EOF
 #!/usr/bin/env bash
-# stk-generated
+# kettle-generated
 exec steam -applaunch $appid "\$@"
 EOF
     chmod +x "$wrapper_path"
@@ -90,10 +92,7 @@ init_wrappers() {
         local initials=$(get_initials "$name")
         local slug=$(get_slug "$name")
 
-        # Only create initials wrapper if it's 2+ characters
-        if [[ ${#initials} -ge 2 ]]; then
-            current_wrappers+=("$initials")
-        fi
+        [[ -n "$initials" ]] && current_wrappers+=("$initials")
         current_wrappers+=("$slug")
     done < <(list_games)
 
@@ -122,30 +121,78 @@ init_wrappers() {
     done
 
     # Create wrappers and symlinks for current games
-    local count=0
     while IFS='|' read -r appid name; do
         local initials=$(get_initials "$name")
         local slug=$(get_slug "$name")
 
-        # Create initials wrapper if 2+ characters
-        if [[ ${#initials} -ge 2 ]]; then
-            create_wrapper "$initials" "$appid"
-            ((count++))
-        fi
-        # Create slug wrapper
+        [[ -n "$initials" ]] && create_wrapper "$initials" "$appid"
         create_wrapper "$slug" "$appid"
-        ((count++))
     done < <(list_games)
-
-    echo "Generated $count Steam wrapper scripts in $WRAPPER_DIR"
 }
 
-# Auto-refresh wrappers on every run
+# Auto-refresh wrappers
 init_wrappers
 
-# List games
-echo ""
-echo "Available games:"
-list_games | while IFS='|' read -r appid name; do
-    echo "  $name"
-done
+# Resolve slug/initials to appid
+get_appid() {
+    local target="$1"
+    while IFS='|' read -r appid name; do
+        local slug=$(get_slug "$name")
+        local initials=$(get_initials "$name")
+        if [[ "$slug" == "$target" ]] || [[ "$initials" == "$target" ]]; then
+            echo "$appid"
+            return 0
+        fi
+    done < <(list_games)
+    return 1
+}
+
+# Get installdir from appid
+get_installdir() {
+    local appid="$1"
+    grep -m1 '"installdir"' "$STEAM_ROOT/steamapps/appmanifest_$appid.acf" 2>/dev/null | \
+        sed 's/.*"installdir"[[:space:]]*"\(.*\)"/\1/'
+}
+
+# Handle subcommands
+case "${1:-}" in
+    ls|list)
+        echo ""
+        echo "Available games:"
+        while IFS='|' read -r appid name; do
+            initials=$(get_initials "$name")
+            slug=$(get_slug "$name")
+            if [[ -n "$initials" ]]; then
+                echo "  $slug ($initials)"
+            else
+                echo "  $slug"
+            fi
+        done < <(list_games)
+        ;;
+    kill|stop)
+        game="${2:-}"
+        if [[ -z "$game" ]]; then
+            echo "Usage: kettle kill <game-slug>"
+            exit 1
+        fi
+        appid=$(get_appid "$game")
+        if [[ -z "$appid" ]]; then
+            echo "Unknown game: $game"
+            exit 1
+        fi
+        installdir=$(get_installdir "$appid")
+        # Kill reaper + all processes matching installdir (. matches both / and \)
+        pkill -f "SteamLaunch AppId=$appid" 2>/dev/null
+        if pkill -9 -f "common.$installdir"; then
+            echo "Killed $game"
+        else
+            echo "Not running: $game"
+        fi
+        ;;
+    big|bigpicture)
+        exec nvidia-offload steam -tenfoot
+        ;;
+    *)
+        exec nvidia-offload steam
+        ;;
+esac

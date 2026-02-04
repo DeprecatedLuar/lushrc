@@ -57,30 +57,32 @@ On every bashrc reload (or explicit `reload` command):
 
 ### Navigation Engine (nav-engine.sh)
 
-Universal path resolver powering `tx`, `yoink`, `wormhole`, and enhanced `z`:
+Universal path resolver powering `tx`, `pw`, `yoink`, `wormhole`, and enhanced `z`:
 
-**TX Index Shorthand**:
+**Flags**: `-f`/`--file` enables file resolution (default is directory-only), `--log` enables debug output.
+
+**Nav Index Shorthand**:
 ```
-w/  → $WORKSPACE/
-t/  → $TOOLS/
-f/  → $TOOLS_FOREIGN/
-h/  → $TOOLS_HOMEMADE/
-c/  → $HOME/.config/
-b/  → $HOME/bin/
-sb/ → /usr/local/bin/
-d/  → $HOME/Downloads/
-doc/→ $HOME/Documents/
+w/  → $WORKSPACE/          l/   → $HOME/.local/
+t/  → $TOOLS/              lb/  → $HOME/.local/bin/
+f/  → $TOOLS_FOREIGN/      pic/ → $XDG_PICTURES_DIR/
+h/  → $TOOLS_HOMEMADE/     vid/ → $XDG_VIDEOS_DIR/
+c/  → $HOME/.config/       d/   → $HOME/Downloads/
+b/  → $HOME/bin/           doc/ → $DOCUMENTS/
+sb/ → /usr/local/bin/      etc/ → /etc/
 ```
 
 **Resolution Order**:
-1. TX index expansion (if matches prefix)
-2. Zoxide fuzzy history lookup
-3. Path expansion (~/ → $HOME/)
+1. Nav index expansion (if matches prefix)
+2. Recursive case-insensitive fuzzy matching
+3. Zoxide fuzzy history lookup
 4. Returns single absolute path
 
 **Usage in tools**:
 ```bash
-tx w/projects ~/backup      # Move using TX indices
+tx w/projects ~/backup      # Move using nav indices
+pw cat c/lushrc/bashrc      # Resolve file path and cat it
+cat $(pw c/lushrc/bashrc)   # Inline substitution
 yoink ssh://host:w/file .   # Remote pull with nav-engine on both ends
 wormhole t/script b/alias   # Create symlink using shortcuts
 ```
@@ -120,6 +122,7 @@ hotline             # Open rofi prompt (GUI entry)
 History: `/tmp/hotline_history` with `!!` and `!-N` expansion
 
 ### File Operations
+- **pw**: Path wrapper — resolves nav indices inline (`pw cat c/lushrc/bashrc`) or via substitution (`cat $(pw c/file)`)
 - **pack/unpack**: Universal archive handling (tar, zip, 7z, etc.)
 - **tx**: Navigation + file moving with undo (undo data in `/tmp/tx-undo-$USER/`)
 - **yoink/yeet**: Remote file transfer (rsync over SSH)
@@ -164,13 +167,14 @@ Add sourcing in `modules/universal/source.sh` for universal modules.
 ### Using nav-engine in Scripts
 
 ```bash
-source "$LIBDIR/nav-engine.sh"
+# Get absolute path from nav index or zoxide (directory-only)
+dest=$("$LIBDIR/nav-engine.sh" "$1")
 
-# Get absolute path from TX index or zoxide
-dest=$(nav-engine "$1")
+# File-aware resolution (-f flag)
+dest=$("$LIBDIR/nav-engine.sh" -f "$1")
 
-# Optional: Enable logging
-dest=$(nav-engine --log "$1")
+# Enable debug logging
+dest=$("$LIBDIR/nav-engine.sh" --log "$1")
 ```
 
 ### SAT Package Source
