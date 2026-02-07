@@ -416,7 +416,9 @@ if [[ "$query" == */* ]]; then
 fi
 
 # Try current directory match (case-insensitive) for simple queries
-local_match=$(find . -maxdepth 1 -type d -iname "$query" -print -quit 2>/dev/null)
+local_find_type=(-type d)
+[[ "$FILE_MODE" == true ]] && local_find_type=(\( -type d -o -type f \))
+local_match=$(find . -maxdepth 1 "${local_find_type[@]}" -iname "$query" -print -quit 2>/dev/null)
 if [[ -n "$local_match" ]]; then
     echo "$PWD/${local_match#./}"
     exit 0

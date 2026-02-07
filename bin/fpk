@@ -1,79 +1,91 @@
 #!/usr/bin/env bash
-# fpk - Simple flatpak launcher by suffix
+# fpk - Simple flatpak launcher with auto-generated wrapper scripts
 
-ALIAS_FILE="$BASHRC/modules/local.sh"
+WRAPPER_DIR="$HOME/.local/share/fpk/wrappers"
+SYMLINK_DIR="$HOME/.local/bin"
 
 list_apps() {
     flatpak list --app --columns=application | sort
 }
 
 get_suffix() {
-    echo "$1" | awk -F. '{print $NF}'
+    echo "${1##*.}"
 }
 
-init_aliases() {
-    local aliases=""
-    local begin_marker="# BEGIN fpk aliases"
-    local end_marker="# END fpk aliases"
+create_wrapper() {
+    local name="$1" app="$2"
+    cat > "$WRAPPER_DIR/$name" <<EOF
+#!/usr/bin/env bash
+# fpk-generated
+exec flatpak run $app "\$@"
+EOF
+    chmod +x "$WRAPPER_DIR/$name"
+    ln -sf "$WRAPPER_DIR/$name" "$SYMLINK_DIR/$name"
+}
 
-    # Generate alias lines
+init_wrappers() {
+    mkdir -p "$WRAPPER_DIR" "$SYMLINK_DIR"
+
+    # Collect current suffixes
+    local current_names=()
     while read -r app; do
-        suffix=$(get_suffix "$app")
-        suffix_lower="${suffix,,}"
-        aliases+="alias ${suffix_lower}='flatpak run ${app}'"$'\n'
+        local suffix="${app##*.}"
+        current_names+=("${suffix,,}")
     done < <(list_apps)
 
-    # Create new alias block
-    local new_block="${begin_marker}"$'\n'"${aliases}${end_marker}"
+    # Clean up stale wrappers
+    for wrapper in "$WRAPPER_DIR"/*; do
+        [[ ! -f "$wrapper" ]] && continue
+        local name=$(basename "$wrapper")
+        local found=0
+        for current in "${current_names[@]}"; do
+            [[ "$name" == "$current" ]] && found=1 && break
+        done
+        if [[ $found -eq 0 ]]; then
+            rm -f "$wrapper" "$SYMLINK_DIR/$name"
+        fi
+    done
 
-    # Remove old block if exists, then append new one
-    if [[ -f "$ALIAS_FILE" ]]; then
-        sed -i "/^${begin_marker}/,/^${end_marker}/d" "$ALIAS_FILE"
-    fi
-
-    echo "" >> "$ALIAS_FILE"
-    echo "$new_block" >> "$ALIAS_FILE"
-
-    echo "Generated $(echo "$aliases" | grep -c alias) flatpak aliases in $ALIAS_FILE"
+    # Create wrappers
+    while read -r app; do
+        local suffix="${app##*.}"
+        create_wrapper "${suffix,,}" "$app"
+    done < <(list_apps)
 }
 
-if [[ -z "$1" ]]; then
-    # No args: list all suffixes (lowercase)
-    list_apps | while read -r app; do
-        suffix=$(get_suffix "$app")
-        echo "${suffix,,}"
-    done | sort -u
-    exit 0
-fi
+# Auto-refresh wrappers
+init_wrappers
 
-# Handle init subcommand
-if [[ "$1" == "init" ]]; then
-    init_aliases
-    exit 0
-fi
+case "${1:-}" in
+    "")
+        # No args: list all suffixes
+        list_apps | while read -r app; do
+            echo "${app##*.}" | tr '[:upper:]' '[:lower:]'
+        done | sort -u
+        ;;
+    *)
+        # Search for matching app (case-insensitive)
+        target="${1,,}"
+        match=""
+        while read -r app; do
+            suffix="${app##*.}"
+            if [[ "${suffix,,}" == "$target" ]]; then
+                if [[ -n "$match" ]]; then
+                    echo "Error: Multiple matches found:"
+                    echo "  $match"
+                    echo "  $app"
+                    exit 1
+                fi
+                match="$app"
+            fi
+        done < <(list_apps)
 
-# Search for matching app (case-insensitive)
-target="${1,,}"  # Convert to lowercase
-match=""
-
-while read -r app; do
-    suffix=$(get_suffix "$app")
-    if [[ "${suffix,,}" == "$target" ]]; then
-        if [[ -n "$match" ]]; then
-            echo "Error: Multiple matches found:"
-            echo "  $match"
-            echo "  $app"
+        if [[ -z "$match" ]]; then
+            echo "Error: No flatpak found matching '$1'"
             exit 1
         fi
-        match="$app"
-    fi
-done < <(list_apps)
 
-if [[ -z "$match" ]]; then
-    echo "Error: No flatpak found matching '$1'"
-    exit 1
-fi
-
-# Run the matched flatpak
-shift
-exec flatpak run "$match" "$@"
+        shift
+        exec flatpak run "$match" "$@"
+        ;;
+esac
