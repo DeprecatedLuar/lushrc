@@ -178,6 +178,12 @@ cmd_show() {
     tmux has-session -t "$SESSION" 2>/dev/null || \
         tmux new-session -d -s "$SESSION"
 
+    # If running in a terminal (SSH, regular terminal) AND not from GUI launcher, attach directly
+    if [ -t 0 ] && [ -z "$TMUX" ] && [ -z "$HOTLINE_SPAWN" ]; then
+        exec tmux attach -t "$SESSION"
+    fi
+
+    # Otherwise spawn new window (called from rofi/launcher)
     local term="${TERMINAL:-kitty}"
     command -v "$term" &>/dev/null || term="alacritty"
     command -v "$term" &>/dev/null || term="gnome-terminal"
@@ -272,8 +278,8 @@ cmd_input() {
 
     [[ -z "$input" ]] && exit 0
 
-    # Re-invoke hotline with input as arguments
-    exec hotline $input
+    # Re-invoke hotline with input as arguments, mark as coming from GUI
+    exec env HOTLINE_SPAWN=1 hotline $input
 }
 
 show_help() {
