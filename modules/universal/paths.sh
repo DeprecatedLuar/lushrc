@@ -57,7 +57,7 @@ export LIBDIR="$BASHRC/bin/lib"
 
 #------------------------ EXTRAS ---------------------------
 
-export QT_QPA_PLATFORMTHEME=qt5ct
+
 export PIP_REQUIRE_VIRTUALENV=true
 
 #==================== PATH CONFIGURATION ====================

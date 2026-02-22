@@ -1,5 +1,28 @@
 #!/usr/bin/env bash
 
+show_help() {
+    cat << 'EOF'
+scav - Fast file/directory search using fd
+
+USAGE:
+    scav [FLAGS] <query>
+
+FLAGS:
+    -h, --help          Show this help message
+    -f, --file          Search files only
+    -d, --dir, --folder Search directories only
+    -l, --limit <num>   Limit results (default: 1)
+    -<num>              Shorthand for --limit (e.g., -5)
+
+EXAMPLES:
+    scav bashrc         # Find first match for "bashrc"
+    scav -5 bashrc      # Find 5 matches
+    scav -f config      # Find files only
+    scav -d projects    # Find directories only
+    scav -fl3 test      # Combine flags: files, limit 3
+EOF
+}
+
 # Parse flags (standard Unix: flags before positionals)
 TYPE_FLAG=""
 LIMIT=1
@@ -16,8 +39,19 @@ while [[ $# -gt 0 && "$1" == -* ]]; do
 
     # Long flags
     case "$arg" in
+        -h|--help) show_help; exit 0 ;;
         --file) TYPE_FLAG="--type f"; continue ;;
         --dir|--folder) TYPE_FLAG="--type d"; continue ;;
+        --limit)
+            if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+                LIMIT="$1"
+                shift
+            else
+                echo "scav: --limit requires numeric argument" >&2
+                exit 1
+            fi
+            continue
+            ;;
     esac
 
     # Combined short flags: -fn3, -dn5, etc
@@ -28,10 +62,11 @@ while [[ $# -gt 0 && "$1" == -* ]]; do
         flags="${flags:1}"
 
         case "$flag" in
+            h) show_help; exit 0 ;;
             f) TYPE_FLAG="--type f" ;;
             d) TYPE_FLAG="--type d" ;;
-            n)
-                # -n requires numeric value (attached or next arg)
+            l)
+                # -l requires numeric value (attached or next arg)
                 if [[ -n "$flags" ]]; then
                     LIMIT="$flags"
                     flags=""
@@ -39,7 +74,7 @@ while [[ $# -gt 0 && "$1" == -* ]]; do
                     LIMIT="$1"
                     shift
                 else
-                    echo "scav: -n requires numeric argument" >&2
+                    echo "scav: -l requires numeric argument" >&2
                     exit 1
                 fi
                 ;;

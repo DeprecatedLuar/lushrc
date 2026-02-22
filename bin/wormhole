@@ -27,6 +27,12 @@ if [[ -n "$2" ]]; then
         link_path="$dest_path"
     fi
 
+    # Safety check: prevent overwriting existing files/directories
+    if [[ -e "$link_path" ]] && [[ ! -L "$link_path" ]]; then
+        echo "Error: $link_path already exists (not a symlink). Aborting to prevent data loss." >&2
+        exit 1
+    fi
+
     ln -sfn "$source_path" "$link_path"
     echo "$link_path → $source_path"
     exit 0
@@ -38,6 +44,15 @@ if [[ -z "$1" ]]; then
 else
     target=$(~/bin/lib/nav-engine.sh "$1") || exit 1
 fi
+
+# Safety check for each wormhole location
+for wh_path in ~/wormhole ~/Downloads/wormhole ~/Workspace/wormhole ~/Desktop/wormhole; do
+    if [[ -e "$wh_path" ]] && [[ ! -L "$wh_path" ]]; then
+        echo "Error: $wh_path already exists (not a symlink). Aborting to prevent data loss." >&2
+        echo "Use 'wormhole kill' to remove existing wormhole symlinks first." >&2
+        exit 1
+    fi
+done
 
 # Create wormholes in common locations
 ln -sfn "$target" ~/wormhole

@@ -12,10 +12,14 @@ for metric in "${metrics[@]}"; do
                 END {if(cpu) printf "%.0f", cpu}
             ')
             temp=$(sensors 2>/dev/null | grep -E '^(Package id 0|Core 0|temp1):' | head -1 | sed 's/^[^+]*+\([0-9.]*\).*/\1/')
+            cur_freq=$(awk '{sum+=$1; count++} END {if(count>0) printf "%.1f", sum/count/1000000}' /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null)
+            max_freq=$(awk '{print $1/1000000; exit}' /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
+            freq_str=""
+            [[ -n "$cur_freq" && -n "$max_freq" ]] && freq_str=" @ ${cur_freq}/${max_freq}GHz"
             if [[ ${#metrics[@]} -eq 1 ]]; then
                 # Detailed output
                 if [[ -n "$usage" ]]; then
-                    [[ -n "$temp" ]] && printf "CPU %s%% (%s°C)\n" "$usage" "${temp%%.*}" || printf "CPU %s%%\n" "$usage"
+                    [[ -n "$temp" ]] && printf "CPU %s%% (%s°C)%s\n" "$usage" "${temp%%.*}" "$freq_str" || printf "CPU %s%%%s\n" "$usage" "$freq_str"
                 fi
                 sensors 2>/dev/null | awk '/^Core [0-9]+:/ {gsub(/\+|°C/,""); printf "%s %s°C\n", $1$2, $3}'
                 echo ""
@@ -25,7 +29,7 @@ for metric in "${metrics[@]}"; do
                 }'
             else
                 if [[ -n "$usage" ]]; then
-                    [[ -n "$temp" ]] && printf "CPU %s%% (%s°C)\n" "$usage" "${temp%%.*}" || printf "CPU %s%%\n" "$usage"
+                    [[ -n "$temp" ]] && printf "CPU %s%% (%s°C)%s\n" "$usage" "${temp%%.*}" "$freq_str" || printf "CPU %s%%%s\n" "$usage" "$freq_str"
                 fi
             fi
             ;;

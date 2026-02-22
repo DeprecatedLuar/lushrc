@@ -19,13 +19,14 @@ for arg in "$@"; do
 done
 set -- "${POSITIONAL[@]}"
 
-if [[ $# -lt 3 ]]; then
-    echo "Usage: yeet [-c] <items...> <host> <path>"
+if [[ $# -lt 2 ]]; then
+    echo "Usage: yeet [-c] <source> <host:destination>"
     echo ""
     echo "Examples:"
-    echo "  yeet file.txt nuremberg ~            # send to home"
-    echo "  yeet *.log backup.db vps d           # send multiple to Downloads"
-    echo "  yeet -c project/ server w/backups    # copy (keep source)"
+    echo "  yeet file.txt nuremberg:~            # send to home"
+    echo "  yeet backup.db vps:d                 # send to Downloads"
+    echo "  yeet -c project/ server:w/backups    # copy (keep source)"
+    echo "  yeet data.tar.gz user@host:~/data    # specify user"
     echo ""
     echo "Options:"
     echo "  -c, --copy    Keep source after transfer (default: move)"
@@ -36,11 +37,19 @@ if [[ $# -lt 3 ]]; then
     exit 1
 fi
 
-# Last arg is remote path, second-to-last is host, rest are items
-args=("$@")
-DEST_QUERY="${args[-1]}"
-HOST="${args[-2]}"
-ITEMS=("${args[@]:0:$#-2}")
+# First arg is source, second is host:destination
+SOURCE="$1"
+REMOTE="$2"
+
+# Split host:destination
+if [[ ! "$REMOTE" =~ : ]]; then
+    echo "yeet: invalid format, expected host:destination" >&2
+    exit 1
+fi
+
+HOST="${REMOTE%%:*}"
+DEST_QUERY="${REMOTE#*:}"
+ITEMS=("$SOURCE")
 
 # If shell expanded ~ to local $HOME, convert back to ~ for remote
 [[ "$DEST_QUERY" == "$HOME" || "$DEST_QUERY" == "$HOME/"* ]] && DEST_QUERY="~${DEST_QUERY#$HOME}"
@@ -51,30 +60,21 @@ DEST=$(cat "$LIBDIR/nav-engine.sh" | ssh "$HOST" "TERM=dumb bash -s -- '$DEST_QU
     exit 1
 }
 
-if [[ "$SKIP_CONFIRM" == false ]]; then
-    # Check which files exist locally
-    FOUND_ITEMS=()
-    MISSING_ITEMS=()
-    for item in "${ITEMS[@]}"; do
-        if [[ -e "$item" ]]; then
-            FOUND_ITEMS+=("$item")
-        else
-            MISSING_ITEMS+=("$item")
-        fi
-    done
+# Check if rsync is available on remote
+if ! ssh "$HOST" "command -v rsync >/dev/null 2>&1"; then
+    echo "yeet: rsync not found on $HOST" >&2
+    exit 1
+fi
 
-    if [[ ${#FOUND_ITEMS[@]} -eq 0 ]]; then
-        echo "yeet: no matching files found locally" >&2
+if [[ "$SKIP_CONFIRM" == false ]]; then
+    # Check if source exists locally
+    if [[ ! -e "$SOURCE" ]]; then
+        echo "yeet: source not found: $SOURCE" >&2
         exit 1
     fi
 
     echo "Yeeting:"
-    for item in "${FOUND_ITEMS[@]}"; do
-        echo -e "  - \033[34m$item\033[0m"
-    done
-    for item in "${MISSING_ITEMS[@]}"; do
-        echo -e "  - \033[9;31m$item\033[0m"
-    done
+    echo -e "  \033[34m$SOURCE\033[0m"
     echo "To:"
     echo -e "  \033[1;36m$HOST:$DEST\033[0m"
     echo
@@ -85,14 +85,11 @@ if [[ "$SKIP_CONFIRM" == false ]]; then
         exit 0
     fi
 
-    # Clear confirmation output (Yeeting: + items + To: + path + empty + Y/n)
-    printf "\033[%dA\033[J" $((${#ITEMS[@]} + 5))
-else
-    # Skip checks, use all items
-    FOUND_ITEMS=("${ITEMS[@]}")
+    # Clear confirmation output (Yeeting: + item + To: + path + empty + Y/n)
+    printf "\033[%dA\033[J" 5
 fi
 
-ITEM_LIST="${FOUND_ITEMS[*]}"
+FOUND_ITEMS=("$SOURCE")
 
 # Transfer
 ORIGINAL_DIR=$(pwd)
@@ -156,5 +153,5 @@ SUCCESS=true
 
 # Clean final output
 printf "\r\033[K"
-printf "Yeeted \033[34m%s\033[0m\n" "$ITEM_LIST"
+printf "Yeeted \033[34m%s\033[0m\n" "$SOURCE"
 printf " \033[1;36m→ %s:%s\033[0m\n" "$HOST" "$DEST"

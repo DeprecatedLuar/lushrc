@@ -1,14 +1,70 @@
 #!/usr/bin/env bash
 # tranz - Universal file format converter
 
-# Configuration
+#--[Configuration]----------------------------------------------------------
+
 KEEP_ORIGINAL=true
 
-# Whisper transcription
-WHISPER_PYTHON="$HOME/.config/yappers-of-linux/.system/venv/bin/python"
+# Whisper settings
+WHISPER_PATH=""  # Custom whisper Python path (e.g., venv), empty = auto-detect
 WHISPER_MODEL="base"
 WHISPER_DEVICE="cpu"
 WHISPER_COMPUTE="float32"
+WHISPER_MODEL_DIR="$HOME/.cache/whisper-cpp"
+
+#--[Helper Functions]-------------------------------------------------------
+ensure_whisper_model() {
+    local model_name="$1"
+    local model_path="$WHISPER_MODEL_DIR/ggml-${model_name}.bin"
+
+    if [ -f "$model_path" ]; then
+        echo "$model_path"
+        return 0
+    fi
+
+    # Download model
+    mkdir -p "$WHISPER_MODEL_DIR"
+    echo "Downloading whisper model '${model_name}'..." >&2
+
+    if ! command -v whisper-cpp-download-ggml-model >/dev/null 2>&1; then
+        echo "Error: whisper-cpp-download-ggml-model not found" >&2
+        return 1
+    fi
+
+    (cd "$WHISPER_MODEL_DIR" && whisper-cpp-download-ggml-model "$model_name" >/dev/null 2>&1)
+
+    if [ -f "$model_path" ]; then
+        echo "$model_path"
+        return 0
+    else
+        echo "Error: Failed to download model" >&2
+        return 1
+    fi
+}
+
+detect_whisper() {
+    # Try custom path first
+    if [ -n "$WHISPER_PATH" ] && [ -f "$WHISPER_PATH" ]; then
+        echo "python"
+        return 0
+    fi
+
+    # Fall back to whisper-cli
+    if command -v whisper-cli >/dev/null 2>&1; then
+        echo "cli"
+        return 0
+    fi
+
+    echo "Error: No whisper implementation found" >&2
+    echo "" >&2
+    echo "Install whisper-cpp via NixOS:" >&2
+    echo "  environment.systemPackages = with pkgs; [ whisper-cpp ];" >&2
+    echo "" >&2
+    echo "Or set WHISPER_PATH to a Python venv with faster-whisper" >&2
+    return 1
+}
+
+#--[Argument Parsing]-------------------------------------------------------
 
 # Handle flags
 while [[ "$1" == -* ]]; do
@@ -64,7 +120,7 @@ OUTPUT_EXT="${OUTPUT##*.}"
 INPUT_EXT_LOWER=$(echo "$INPUT_EXT" | tr '[:upper:]' '[:lower:]')
 OUTPUT_EXT_LOWER=$(echo "$OUTPUT_EXT" | tr '[:upper:]' '[:lower:]')
 
-# Detect format categories
+#--[Format Detection]-------------------------------------------------------
 get_format_type() {
     local ext="$1"
     case "$ext" in
@@ -88,9 +144,9 @@ get_format_type() {
 
 INPUT_TYPE=$(get_format_type "$INPUT_EXT_LOWER")
 OUTPUT_TYPE=$(get_format_type "$OUTPUT_EXT_LOWER")
-
-# Build conversion pair identifier
 CONVERSION="${INPUT_TYPE}→${OUTPUT_TYPE}"
+
+#--[Cleanup Handler]--------------------------------------------------------
 
 CONVERT_PID=""
 SUCCESS=false
@@ -108,7 +164,7 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
-# Check for required tools based on conversion type
+#--[Tool Checks]------------------------------------------------------------
 case "$CONVERSION" in
     video→audio|video→video|audio→audio)
         if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -124,9 +180,9 @@ case "$CONVERSION" in
         ;;
 esac
 
-printf "Converting"
+#--[Conversion]-------------------------------------------------------------
 
-# Delegate to appropriate tool based on conversion type
+printf "Converting"
 case "$CONVERSION" in
     video→audio)
         # Extract audio from video with appropriate codec
@@ -198,17 +254,63 @@ case "$CONVERSION" in
         ;;
 
     video→text|audio→text)
-        # Check if whisper Python is available
-        if [ ! -f "$WHISPER_PYTHON" ]; then
-            echo ""
-            echo "Error: Whisper Python not found at: $WHISPER_PYTHON"
-            echo "Install faster-whisper or update WHISPER_PYTHON in the script"
+        # Detect which whisper implementation to use
+        WHISPER_TYPE=$(detect_whisper)
+        if [ $? -ne 0 ]; then
             exit 1
         fi
 
-        # Run transcription in background
-        if [ "$OUTPUT_EXT_LOWER" = "srt" ]; then
-            "$WHISPER_PYTHON" -c "
+        if [ "$WHISPER_TYPE" = "cli" ]; then
+            # Use whisper-cpp
+            MODEL_PATH=$(ensure_whisper_model "$WHISPER_MODEL")
+            if [ $? -ne 0 ]; then
+                exit 1
+            fi
+
+            # whisper-cli needs WAV format - convert if needed
+            AUDIO_INPUT="$INPUT"
+            TEMP_WAV=""
+            if [ "$INPUT_EXT_LOWER" != "wav" ]; then
+                TEMP_WAV="/tmp/tranz-$$.wav"
+                if ! ffmpeg -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TEMP_WAV" -y >/dev/null 2>&1; then
+                    echo "Error: Failed to convert audio to WAV" >&2
+                    exit 1
+                fi
+                AUDIO_INPUT="$TEMP_WAV"
+            fi
+
+            # Determine output format flag
+            case "$OUTPUT_EXT_LOWER" in
+                srt)
+                    FORMAT_FLAG="--output-srt"
+                    ;;
+                json)
+                    FORMAT_FLAG="--output-json"
+                    ;;
+                txt|*)
+                    FORMAT_FLAG="--output-txt"
+                    ;;
+            esac
+
+            # Run whisper-cli
+            OUTPUT_BASE="${OUTPUT%.*}"
+            whisper-cli -m "$MODEL_PATH" -f "$AUDIO_INPUT" -of "$OUTPUT_BASE" $FORMAT_FLAG --no-prints >/dev/null 2>&1 &
+
+            # Store temp file for cleanup later
+            WHISPER_TEMP_WAV="$TEMP_WAV"
+
+        else
+            # Use Python faster-whisper
+            if [ ! -f "$WHISPER_PATH" ]; then
+                echo ""
+                echo "Error: Whisper Python not found at: $WHISPER_PATH"
+                echo "Set WHISPER_PATH in the script or install whisper-cpp"
+                exit 1
+            fi
+
+            # Run transcription in background
+            if [ "$OUTPUT_EXT_LOWER" = "srt" ]; then
+                "$WHISPER_PATH" -c "
 from faster_whisper import WhisperModel
 
 def format_timestamp(seconds):
@@ -227,8 +329,8 @@ with open('$OUTPUT', 'w', encoding='utf-8') as f:
         f.write(f'{format_timestamp(segment.start)} --> {format_timestamp(segment.end)}\n')
         f.write(f'{segment.text.strip()}\n\n')
 " &
-        elif [ "$OUTPUT_EXT_LOWER" = "json" ]; then
-            "$WHISPER_PYTHON" -c "
+            elif [ "$OUTPUT_EXT_LOWER" = "json" ]; then
+                "$WHISPER_PATH" -c "
 import json
 from faster_whisper import WhisperModel
 
@@ -252,8 +354,8 @@ output = {
 with open('$OUTPUT', 'w', encoding='utf-8') as f:
     json.dump(output, f, indent=2, ensure_ascii=False)
 " &
-        else
-            "$WHISPER_PYTHON" -c "
+            else
+                "$WHISPER_PATH" -c "
 from faster_whisper import WhisperModel
 
 model = WhisperModel('$WHISPER_MODEL', device='$WHISPER_DEVICE', compute_type='$WHISPER_COMPUTE')
@@ -263,6 +365,7 @@ with open('$OUTPUT', 'w', encoding='utf-8') as f:
     for segment in segments:
         f.write(segment.text.strip() + '\n')
 " &
+            fi
         fi
         ;;
 
@@ -305,6 +408,9 @@ if [ ! -f "$OUTPUT" ]; then
 fi
 
 SUCCESS=true
+
+# Cleanup temp WAV if created
+[ -n "$WHISPER_TEMP_WAV" ] && rm -f "$WHISPER_TEMP_WAV"
 
 # Remove original if requested
 if [ "$KEEP_ORIGINAL" = false ]; then

@@ -12,7 +12,7 @@ export DATA_VIEWER="visidata"
 export MEDIA_PLAYER="celluloid"
 export IMAGE_VIEWER="feh"
 
-export FILEMANAGER="thunar"
+export FILEMANAGER="pcmanfm-qt"
 
 # XDG Portal (native file pickers)
 export GTK_USE_PORTAL=1
