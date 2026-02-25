@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# sat - Satellite installer (universal package manager)
+
+SAT_LIBRARY="${SAT_LIBRARY:-$HOME/.local/share/sat/lib}"
+
+# Ensure library is present (fetch from GitHub if missing)
+_ensure_lib() {
+    [[ -f "$SAT_LIBRARY/common.sh" ]] && return 0
+
+    echo "Downloading latest sat version..."
+    mkdir -p "$SAT_LIBRARY"
+
+    if ! curl -sSL "https://github.com/DeprecatedLuar/sat/archive/refs/heads/main.tar.gz" | \
+         tar xzf - --strip-components=2 -C "$SAT_LIBRARY" "sat-main/lib" 2>/dev/null; then
+        echo "Error: Failed to download sat. Check network connection and firewall settings." >&2
+        exit 1
+    fi
+}
+
+_ensure_lib
+source "$SAT_LIBRARY/common.sh"
+source "$SAT_LIBRARY/commands/internal.sh"  # Early load for manifest functions
+
+# Skip cleanup for internal API calls (prevents recursion)
+[[ "$1" != "internal" ]] && cleanup_orphaned_sessions
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ──[ROUTER]────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+
+case "$1" in
+    deps|dependencies)
+        source "$SAT_LIBRARY/commands/deps.sh"
+        sat_deps
+        ;;
+
+    install|i)
+        shift
+        source "$SAT_LIBRARY/commands/install.sh"
+        sat_install "$@"
+        ;;
+
+    search)
+        [[ -z "$2" ]] && { echo "Usage: sat search <program> [--wrap]"; exit 1; }
+        shift
+        source "$SAT_LIBRARY/commands/search.sh"
+        sat_search "$@"
+        ;;
+
+    uninstall|remove|rm)
+        [[ -z "$2" ]] && { echo "Usage: sat uninstall <program> [program2] ..."; exit 1; }
+        shift
+        source "$SAT_LIBRARY/commands/uninstall.sh"
+        sat_uninstall "$@"
+        ;;
+
+    shell)
+        shift
+        source "$SAT_LIBRARY/commands/shell.sh"
+        sat_shell "$@"
+        ;;
+
+    list|ls)
+        source "$SAT_LIBRARY/commands/list.sh"
+        sat_list
+        ;;
+
+    track)
+        [[ -z "$2" ]] && { echo "Usage: sat track <program> [program2] ..."; exit 1; }
+        shift
+        source "$SAT_LIBRARY/commands/track.sh"
+        sat_track "$@"
+        ;;
+
+    scan)
+        source "$SAT_LIBRARY/commands/scan.sh"
+        sat_scan
+        ;;
+
+    untrack)
+        [[ -z "$2" ]] && { echo "Usage: sat untrack <program> [program2] ..."; exit 1; }
+        shift
+        source "$SAT_LIBRARY/commands/untrack.sh"
+        sat_untrack "$@"
+        ;;
+
+    source|src)
+        [[ -z "$2" ]] && { echo "Usage: sat source <packagemanager>"; exit 1; }
+        SOURCE_SCRIPT="$SAT_BASE/packages/sources/$2.sh"
+        source <(curl -sSL "$SOURCE_SCRIPT") || { echo "Source '$2' not found"; exit 1; }
+        # Try bootstrap function, else _ensure_<name> pattern
+        if declare -f bootstrap &>/dev/null; then
+            bootstrap
+        elif declare -f "_ensure_$2" &>/dev/null; then
+            "_ensure_$2"
+        fi
+        ;;
+
+    clone)
+        shift
+        source "$SAT_LIBRARY/commands/clone.sh"
+        sat_clone "$@"
+        ;;
+
+    pull)
+        source "$SAT_LIBRARY/commands/pull.sh"
+        sat_pull
+        ;;
+
+    info|which|whereis)
+        [[ -z "$2" ]] && { echo "Usage: sat info <program> [program2] ..."; exit 1; }
+        shift
+        source "$SAT_LIBRARY/commands/info.sh"
+        sat_info "$@"
+        ;;
+
+    internal)
+        shift
+        sat_internal "$@"
+        ;;
+
+    help|--help|-h|"")
+        cat << 'EOF'
+         ,-.
+        / \  `.  __..-,O
+       :   \ --''_..-'.'
+       |    . .-' `. '.
+       :     .     .`.'
+        \     `.  /  ..
+         \      `.   ' .
+          `,       `.   \
+         ,|,`.        `-.\
+        '.||  ``-...__..-`
+         |  |
+         |__|
+         /||\    Usage: sat <command>
+        //||\\
+       // || \\
+    __//__||__\\__
+   '--------------'
+
+Commands:
+  install|i <pkg>     - Install package(s) with optional source
+  source|src <pm>     - Install a package manager (huber, cargo, brew, nix)
+  search <program>    - Find package across sources (--all raw, --wrap full)
+  uninstall|rm <prog> - Remove program installed via sat
+  shell <tool>        - Temp shell with tools, auto-cleanup on exit (requires tmux)
+  deps                - Install sat dependencies (tmux, wget, curl, jq)
+  info <program>      - Source, path, version, shadowed installs (alias: which)
+  list|ls             - List tracked packages (auto-cleans stale entries)
+  track <program>     - Add existing program to manifest for sat management
+  untrack <program>   - Remove from manifest without uninstalling
+  scan                - Scan ecosystem dirs and add all found packages
+  pull                - Refresh sat library from GitHub
+  clone <repo> [dest] - Clone your repo
+
+Source syntax (install/shell):
+  pkg:sys             - System package manager (apt/pacman/etc)
+  pkg:brew            - Homebrew
+  pkg:nix             - Nix profile
+  pkg:rs :rust        - Cargo (Rust)
+  pkg:py :python      - uv (Python)
+  pkg:js :node        - npm (Node)
+  pkg:go              - go install
+
+Examples:
+  sat install fd:rs bat:rs ripgrep:rs
+  sat shell hyperfine:brew cowsay:sys jq
+EOF
+        ;;
+
+    *)
+        echo "sat: unknown command '$1'" >&2
+        exit 1
+        ;;
+esac
