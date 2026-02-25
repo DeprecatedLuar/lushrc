@@ -8,7 +8,6 @@ reload() {
 
 alias deploy-noruelga='$LIBDIR/noruelga.sh'
 
-alias e='edit'
 alias launcher='$LAUNCHER'
 alias lc='$LAUNCHER'
 alias files='$FILEMANAGER'
@@ -18,8 +17,6 @@ alias eua='$EDITOR $BASHRC/modules/universal/aliases.sh'
 alias el='$EDITOR $BASHRC/modules/local.sh'
 alias ed='$EDITOR $BASHRC/modules/defaults/defaults.sh'
 alias tx='. $BASHRC/bin/tx'
-alias wh='wormhole'
-alias vch='vibecheck'
 
 alias compose='docker-compose'
 alias compose-r='docker-compose down && docker-compose up -d'

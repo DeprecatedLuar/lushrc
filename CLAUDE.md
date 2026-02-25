@@ -36,9 +36,13 @@ modules/universal/source.sh
 ```
 
 **Key Environment Variables**:
-- `BASHRC=$HOME/.config/lushrc` - Root of all configs
+- `BASHRC=$HOME/.config/lushrc` - Root of all configs (single source of truth)
 - `LIBDIR=$BASHRC/bin/lib` - Shell script libraries
-- `WORKSPACE`, `TOOLS`, `PROJECTS` - Developer workspace directories
+- `WORKSPACE=$HOME/Workspace` - Root workspace directory
+- `TOOLS=$WORKSPACE/tools` - Cloned repos and external tools
+- `PROJECTS=$WORKSPACE/dev` - Your active development projects
+- `DOCKER_DIR=$WORKSPACE/docker` - Docker configurations
+- `SHARED=$WORKSPACE/shared` - Shared workspace resources
 - XDG-compliant directories in `xdg.sh`
 
 ### Self-Healing Symlink System
@@ -65,11 +69,10 @@ Universal path resolver powering `tx`, `pw`, `yoink`, `wormhole`, and enhanced `
 ```
 w/  → $WORKSPACE/          l/   → $HOME/.local/
 t/  → $TOOLS/              lb/  → $HOME/.local/bin/
-f/  → $TOOLS_FOREIGN/      pic/ → $XDG_PICTURES_DIR/
-h/  → $TOOLS_HOMEMADE/     vid/ → $XDG_VIDEOS_DIR/
-c/  → $HOME/.config/       d/   → $HOME/Downloads/
-b/  → $HOME/bin/           doc/ → $DOCUMENTS/
-sb/ → /usr/local/bin/      etc/ → /etc/
+c/  → $HOME/.config/       pic/ → $XDG_PICTURES_DIR/
+b/  → $HOME/bin/           vid/ → $XDG_VIDEOS_DIR/
+sb/ → /usr/local/bin/      d/   → $HOME/Downloads/
+doc/ → $DOCUMENTS/         etc/ → /etc/
 ```
 
 **Resolution Order**:
@@ -80,29 +83,45 @@ sb/ → /usr/local/bin/      etc/ → /etc/
 
 **Usage in tools**:
 ```bash
-tx w/projects ~/backup      # Move using nav indices
+tx w/dev ~/backup           # Move using nav indices
 pw cat c/lushrc/bashrc      # Resolve file path and cat it
 cat $(pw c/lushrc/bashrc)   # Inline substitution
 yoink ssh://host:w/file .   # Remote pull with nav-engine on both ends
 wormhole t/script b/alias   # Create symlink using shortcuts
 ```
 
+**Resolution Implementation**: Nav-engine uses a sophisticated fuzzy matching algorithm:
+1. Decomposes paths right-to-left (e.g., `proj/src/main` → tries `main`, then `src/main`, then full path)
+2. Case-insensitive glob matching with intelligent scoring (depth penalty, length similarity, position bonuses)
+3. Falls back to `find` for deeper searches if glob fails
+4. Returns single best match or errors with suggestions
+
 ### Package Management (SAT/notsat)
 
-Multi-source package manager wrapper:
+Multi-source package manager wrapper with intelligent fallback and session isolation.
 
-**Sources**: cargo, npm, uv, system (apt/apk/pacman/dnf), GitHub releases, SAT scripts
+**Sources**: cargo, npm, uv, system (apt/apk/pacman/dnf), GitHub releases, nix, brew, SAT scripts
+
+**Install Priority Order**:
+- Permanent (system): `system → brew → nix → cargo → uv → npm → sat → gh`
+- Temporary (shell): `brew → nix → cargo → uv → system → npm → sat → gh`
 
 **Manifests**:
-- System: `~/.local/share/sat/manifest` (tool=source)
-- Session: `~/.local/share/sat/shell/<SESSION_ID>` (tool:source:pid)
+- System: `~/.local/share/sat/manifest` (tool=source, permanent installs)
+- Session: `~/.local/share/sat/shell/<SESSION_ID>` (tool:source:pid, ephemeral per shell)
+- Master: `~/.local/share/sat/shell/manifest` (tracks active shell sessions)
 
 **Key scripts**:
-- `bin/notsat` - Main entry point
-- `bin/lib/sat/` - Source-specific installers (cargo.sh, npm.sh, gh.sh, etc.)
-- `bin/lib/sat/common.sh` - Shared utilities
+- `bin/notsat` - Main entry point (handles install/uninstall/list/promote)
+- `bin/lib/sat/` - Source-specific installers (cargo.sh, npm.sh, gh.sh, system.sh, etc.)
+- `bin/lib/sat/common.sh` - Shared utilities, manifest management, colored output
 
-**Features**: Fallback install order, source detection, session isolation
+**Features**:
+- Fallback install order (tries multiple sources)
+- Automatic source detection for existing binaries
+- Session isolation (temp installs cleanup on shell exit)
+- Promotion (move temp shell tools to permanent system)
+- Colored output by source (Rust=red, Node=green, Python=blue, etc.)
 
 ## Key Utilities
 
@@ -200,12 +219,15 @@ Register in `bin/lib/sat/common.sh` arrays.
 
 ## Important Conventions
 
-- **Single source of truth**: `$BASHRC` variable points to repo root
-- **Self-healing**: Broken links cleaned automatically on reload
-- **XDG compliance**: Respect standard directory variables
-- **Idempotency**: All sync/setup scripts can run multiple times
-- **Grace handling**: Scripts succeed even if directories don't exist
-- **Configuration-as-code**: Shell scripts, not YAML/TOML
+- **Single source of truth**: `$BASHRC` variable points to repo root - all paths are absolute from this anchor
+- **Self-healing**: Broken links cleaned automatically on reload, missing directories auto-created
+- **XDG compliance**: Respect standard directory variables (CONFIG_HOME, DATA_HOME, CACHE_HOME, etc.)
+- **Idempotency**: All sync/setup scripts can run multiple times safely (symlink-farm, reload, ensure-dirs)
+- **Grace handling**: Scripts succeed even if directories don't exist (`|| true`, `|| return 0`)
+- **Configuration-as-code**: Shell scripts, not YAML/TOML - enables inline logic and conditional sourcing
+- **Absolute paths only**: No relative paths in critical configs (prevents context-dependent bugs)
+- **Fuzzy-first navigation**: Nav-engine prefers user intent (fuzzy matching) over exact paths
+- **Git-ignored customization**: `modules/local.sh` for user-specific configs (never committed)
 
 ## Remote Operations
 
@@ -233,3 +255,93 @@ Enhanced SSH wrapper (`assh`) enables password prompts in non-interactive shells
 
 **User Overrides**:
 - `modules/local.sh` (auto-created, git-ignored)
+
+## Architecture Insights
+
+### Component Interaction Flow
+
+```
+User Command (tx, yoink, pw, z, etc.)
+    ↓
+[nav-engine.sh] - Universal path resolver
+    ├─ Nav index expansion (w/, t/, c/, etc.)
+    ├─ Exact path check
+    ├─ Right-to-left decomposition fuzzy search
+    ├─ Glob matching with intelligent scoring
+    └─ Zoxide fallback (if available)
+    ↓
+[Resolved Absolute Path]
+    ↓
+[Execute File/Navigation Operation]
+```
+
+### Reload Workflow
+
+```
+reload command
+    ↓
+source ~/.bashrc (re-sources all modules)
+    ↓
+$LIBDIR/reload.sh
+    ├─ ensure-dirs.sh (mkdir -p all workspace directories)
+    ├─ chmod +x (all scripts in bin/, TOOLS/bin/)
+    ├─ symlink-farm.sh
+    │   ├─ Cleanup: Remove broken symlinks from ~/bin, ~/.local/bin
+    │   ├─ Link: $TOOLS/bin/* → ~/bin/
+    │   ├─ Link: $BASHRC/bin/lib/* → ~/bin/lib/
+    │   ├─ Link: UV tools → ~/.local/bin/
+    │   └─ Link: Nix apps, fonts, wallpapers
+    └─ Optional: sync_system_links (if --system/-s flag, requires sudo)
+```
+
+### Critical File Dependency Map
+
+| File | Depends On | Used By | Purpose |
+|------|-----------|---------|---------|
+| `bashrc` | None (entry point) | Shell init | Sets BASHRC, sources modules |
+| `modules/universal/paths.sh` | `xdg.sh` | Everything | Defines all environment vars |
+| `bin/lib/nav-engine.sh` | `paths.sh` (for env vars) | tx, pw, yoink, z, wormhole | Path resolution engine |
+| `bin/lib/symlink-farm.sh` | `paths.sh` | `reload.sh` | Maintains symlink consistency |
+| `bin/lib/reload.sh` | `ensure-dirs.sh`, `symlink-farm.sh` | `reload` alias | Orchestrates config refresh |
+| `bin/notsat` | `bin/lib/sat/*` | User package management | Multi-source package installer |
+| `bin/hotline` | tmux | Async task execution | Command launcher with notifications |
+
+### Why Nav-Engine is Central
+
+Nav-engine is the **architectural keystone** of lushrc:
+- **Every navigation tool depends on it**: tx, yoink, pw, z, wormhole all call nav-engine.sh
+- **Enables shorthand everywhere**: Users can type `w/dev` instead of full paths
+- **Fuzzy matching reduces friction**: No need to remember exact names
+- **Remote operations work**: Can bootstrap nav-engine via SSH for yoink/dock
+- **Consistent behavior**: Single resolution algorithm ensures predictable results
+
+Without nav-engine, every tool would implement its own path logic (DRY violation).
+
+### Why Symlink-Farm is Self-Healing
+
+Symlink-farm maintains command availability through:
+1. **Idempotent cleanup**: Removes broken links first (safe to run repeatedly)
+2. **Multiple sources**: Links from both BASHRC/bin and TOOLS/bin
+3. **Automatic sync**: Runs on every reload (after git pull, config changes)
+4. **UV integration**: Detects and links uv-installed tools
+5. **System-level option**: Can sync to /usr/local/bin with sudo
+
+This eliminates "command not found" errors after moving/deleting repos.
+
+### Workspace Organization (Current Structure)
+
+```
+Workspace/
+├── dev/              # Your active code projects (renamed from projects/)
+│   └── <repos>       # Git repos you're developing
+├── tools/            # External tools and cloned repos (not actively developing)
+│   └── bin/          # Tool binaries (symlinked to ~/bin)
+├── docker/           # Docker configurations and compose files
+├── krita/            # Krita art projects (.kra files)
+├── blender/          # Blender 3D projects (.blend files)
+├── kdenlive/         # Kdenlive video projects
+├── audacity/         # Audacity audio projects
+└── shared/           # Shared workspace resources
+```
+
+**Design Rationale**: Tool-specific folders (krita/, blender/, etc.) organize by file format since each tool produces distinct project files. `dev/` contains code repos, `tools/` contains dependencies/external repos.

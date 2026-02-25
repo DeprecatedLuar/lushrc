@@ -294,7 +294,7 @@ case "$CONVERSION" in
 
             # Run whisper-cli
             OUTPUT_BASE="${OUTPUT%.*}"
-            whisper-cli -m "$MODEL_PATH" -f "$AUDIO_INPUT" -of "$OUTPUT_BASE" $FORMAT_FLAG --no-prints >/dev/null 2>&1 &
+            whisper-cli -m "$MODEL_PATH" -f "$AUDIO_INPUT" -of "$OUTPUT_BASE" $FORMAT_FLAG -l auto --no-prints >/dev/null 2>&1 &
 
             # Store temp file for cleanup later
             WHISPER_TEMP_WAV="$TEMP_WAV"

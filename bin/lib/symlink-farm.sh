@@ -63,7 +63,7 @@ sync_system_links() {
 setup_sys "$HOME/bin"
 ln -sfn "$HOME/.local/bin" "$HOME/bin/local" 2>/dev/null || true
 link_contents "$TOOLS/bin" "$HOME/bin"
-link_contents "$BASHRC/bin" "$HOME/bin"
+# $BASHRC/bin is now in PATH directly - no symlinks needed
 link_contents "$TOOLS/bin/lib" "$HOME/bin/lib"
 link_contents "$BASHRC/bin/lib" "$HOME/bin/lib"
 

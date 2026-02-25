@@ -42,15 +42,12 @@ export VIDEOS="$MEDIA/Videos"
 # Workspace root and main directories
 export WORKSPACE="$HOME/Workspace"
 export TOOLS="$WORKSPACE/tools"
-export PROJECTS="$WORKSPACE/projects"
+export PROJECTS="$WORKSPACE/dev"
 export SHARED="$WORKSPACE/shared"
 export SATELLITE="$PROJECTS/cli/the-satellite"
 
 # Tools subdirectories
-export TOOLS_FOREIGN="$TOOLS/foreign"
-export FOREIGN="$TOOLS/foreign"
-export HOMEMADE="$TOOLS/homemade"
-export DOCKER_DIR="$TOOLS/docker"
+export DOCKER_DIR="$WORKSPACE/docker"
 
 # Script library directory
 export LIBDIR="$BASHRC/bin/lib"
@@ -65,7 +62,7 @@ export PIP_REQUIRE_VIRTUALENV=true
 #------------------- UNIVERSAL PATHS ----------------------
 
 export PATH="$HOME/bin:$PATH"
-export PATH="$TOOLS_FOREIGN:$PATH"
+export PATH="$BASHRC/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 
 #-------------------- DEV TOOLS PATHS ----------------------

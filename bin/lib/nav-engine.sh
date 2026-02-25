@@ -70,8 +70,6 @@ expand_index() {
     case "$1" in
         w/*)   echo "$WORKSPACE/${1#w/}" ;;
         t/*)   echo "$TOOLS/${1#t/}" ;;
-        f/*)   echo "$FOREIGN/${1#f/}" ;;
-        h/*)   echo "$HOMEMADE/${1#h/}" ;;
         c/*)   echo "$HOME/.config/${1#c/}" ;;
         b/*)   echo "$HOME/bin/${1#b/}" ;;
         sb/*)  echo "/usr/local/bin/${1#sb/}" ;;
@@ -84,8 +82,6 @@ expand_index() {
         etc/*) echo "/etc/${1#etc/}" ;;
         w)     echo "$WORKSPACE" ;;
         t)     echo "$TOOLS" ;;
-        f)     echo "$FOREIGN" ;;
-        h)     echo "$HOMEMADE" ;;
         c)     echo "$HOME/.config" ;;
         b)     echo "$HOME/bin" ;;
         sb)    echo "/usr/local/bin" ;;
