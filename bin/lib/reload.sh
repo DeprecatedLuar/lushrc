@@ -16,6 +16,10 @@ chmod +x $HOME/bin/sys/* 2>/dev/null || true
 #--[SYNC SYMLINKS]-----------------------------
 
 source "$LIBDIR/symlink-farm.sh"
+
+#--[SYNC MIME DEFAULTS]------------------------
+
+source "$LIBDIR/sync-mime-defaults.sh"
 ln -sf "$BASHRC/modules/defaults/mimeapps.list" "$HOME/.config/mimeapps.list"
 
 #--[SYSTEM-LEVEL SYNC]-------------------------

@@ -225,7 +225,7 @@ case "$CONVERSION" in
 
     image→image)
         # Delegate to imagemagick
-        if ! command -v convert >/dev/null; then
+        if ! command -v magick >/dev/null; then
             echo ""
             echo "Error: ImageMagick not found. Install it with:"
             echo "  sudo apt install imagemagick"
@@ -236,20 +236,20 @@ case "$CONVERSION" in
         if [ "$OUTPUT_EXT_LOWER" = "webp" ]; then
             case "$INPUT_EXT_LOWER" in
                 heic|heif)
-                    convert "$INPUT" -quality 78 "$OUTPUT" &
+                    magick "$INPUT" -quality 78 "$OUTPUT" &
                     ;;
                 jpg|jpeg)
-                    convert "$INPUT" -quality 50 "$OUTPUT" &
+                    magick "$INPUT" -quality 50 "$OUTPUT" &
                     ;;
                 png)
-                    convert "$INPUT" -quality 76 "$OUTPUT" &
+                    magick "$INPUT" -quality 76 "$OUTPUT" &
                     ;;
                 *)
-                    convert "$INPUT" "$OUTPUT" &
+                    magick "$INPUT" "$OUTPUT" &
                     ;;
             esac
         else
-            convert "$INPUT" "$OUTPUT" &
+            magick "$INPUT" "$OUTPUT" &
         fi
         ;;
 

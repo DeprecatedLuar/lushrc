@@ -165,12 +165,19 @@ cmd_exec() {
         final_cmd="$command 2>&1 | tee '$output_file'; exit"
         tmux send-keys -t "$target_pane" "$final_cmd" Enter
 
-        # Wait for pane to exit
-        while tmux list-panes -t "$SESSION" -F "#{pane_id}" 2>/dev/null | grep -q "^${target_pane}$"; do
-            sleep 0.1
-        done
-
-        notify_from_file "$output_file"
+        # Fire-and-forget from interactive terminal; block when called from GUI/scripts
+        if [ -t 0 ] && [ -z "$HOTLINE_SPAWN" ]; then
+            ( while tmux list-panes -t "$SESSION" -F "#{pane_id}" 2>/dev/null | grep -q "^${target_pane}$"; do
+                sleep 0.1
+              done
+              notify_from_file "$output_file" ) &
+            disown
+        else
+            while tmux list-panes -t "$SESSION" -F "#{pane_id}" 2>/dev/null | grep -q "^${target_pane}$"; do
+                sleep 0.1
+            done
+            notify_from_file "$output_file"
+        fi
     fi
 }
 
