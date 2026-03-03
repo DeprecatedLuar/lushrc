@@ -64,62 +64,6 @@ detect_whisper() {
     return 1
 }
 
-#--[Argument Parsing]-------------------------------------------------------
-
-# Handle flags
-while [[ "$1" == -* ]]; do
-    case "$1" in
-        -r|--replace)
-            KEEP_ORIGINAL=false
-            shift
-            ;;
-        *)
-            echo "Error: Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# Validate arguments
-if [ -z "$1" ] || [ -z "$2" ]; then
-    echo "Usage: tranz [-r|--replace] <input_file> <output_file|.ext>"
-    echo "  -r, --replace  Remove original after conversion (default: keep)"
-    echo ""
-    echo "Examples:"
-    echo "  tranz video.mkv audio.flac       # Convert MKV to FLAC audio"
-    echo "  tranz video.mkv .mp3             # Auto-name: video.mp3"
-    echo "  tranz image.png image.jpg        # Convert image formats"
-    echo "  tranz -r old.avi new.mp4         # Convert and remove original"
-    exit 1
-fi
-
-INPUT="$1"
-OUTPUT="$2"
-
-# Validate input exists
-if [ ! -f "$INPUT" ]; then
-    echo "Error: Input file not found: $INPUT"
-    exit 1
-fi
-
-# Auto-generate output filename if only extension provided
-if [[ "$OUTPUT" == .* ]]; then
-    OUTPUT="${INPUT%.*}$OUTPUT"
-fi
-
-# Check if output already exists
-if [ -f "$OUTPUT" ]; then
-    echo "Error: Output file already exists: $OUTPUT"
-    echo "Remove it first or choose a different name"
-    exit 1
-fi
-
-# Extract extensions
-INPUT_EXT="${INPUT##*.}"
-OUTPUT_EXT="${OUTPUT##*.}"
-INPUT_EXT_LOWER=$(echo "$INPUT_EXT" | tr '[:upper:]' '[:lower:]')
-OUTPUT_EXT_LOWER=$(echo "$OUTPUT_EXT" | tr '[:upper:]' '[:lower:]')
-
 #--[Format Detection]-------------------------------------------------------
 get_format_type() {
     local ext="$1"
@@ -142,175 +86,198 @@ get_format_type() {
     esac
 }
 
-INPUT_TYPE=$(get_format_type "$INPUT_EXT_LOWER")
-OUTPUT_TYPE=$(get_format_type "$OUTPUT_EXT_LOWER")
-CONVERSION="${INPUT_TYPE}→${OUTPUT_TYPE}"
+#--[Argument Parsing]-------------------------------------------------------
 
-#--[Cleanup Handler]--------------------------------------------------------
+# Handle flags
+while [[ "$1" == -* ]]; do
+    case "$1" in
+        -r|--replace)
+            KEEP_ORIGINAL=false
+            shift
+            ;;
+        *)
+            echo "Error: Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate arguments
+if [ "$#" -lt 2 ]; then
+    echo "Usage: tranz [-r|--replace] <input_file...> <output_file|.ext>"
+    echo "  -r, --replace  Remove original after conversion (default: keep)"
+    echo ""
+    echo "Examples:"
+    echo "  tranz video.mkv audio.flac       # Convert MKV to FLAC audio"
+    echo "  tranz video.mkv .mp3             # Auto-name: video.mp3"
+    echo "  tranz image.png image.jpg        # Convert image formats"
+    echo "  tranz -r old.avi new.mp4         # Convert and remove original"
+    echo "  tranz ./*.png .webp              # Batch convert all PNGs to WebP"
+    echo "  tranz ./* .webp                  # Batch convert all images to WebP (skips unsupported)"
+    exit 1
+fi
+
+# Last arg = output, everything else = inputs
+OUTPUT_ARG="${@: -1}"
+INPUTS=("${@:1:$#-1}")
+
+# Single-file mode: output can be a full filename
+# Batch mode (multiple inputs): output must be an extension
+if [ "${#INPUTS[@]}" -gt 1 ] && [[ "$OUTPUT_ARG" != .* ]]; then
+    echo "Error: Multiple inputs require an extension as output (e.g., .webp)"
+    exit 1
+fi
+
+#--[Conversion Function]----------------------------------------------------
 
 CONVERT_PID=""
-SUCCESS=false
+CURRENT_OUTPUT=""
 
 cleanup() {
-    if [ -n "$CONVERT_PID" ] && kill -0 $CONVERT_PID 2>/dev/null; then
-        kill $CONVERT_PID 2>/dev/null
-        wait $CONVERT_PID 2>/dev/null
+    if [ -n "$CONVERT_PID" ] && kill -0 "$CONVERT_PID" 2>/dev/null; then
+        kill "$CONVERT_PID" 2>/dev/null
+        wait "$CONVERT_PID" 2>/dev/null
     fi
-
-    if [ "$SUCCESS" = false ] && [ -f "$OUTPUT" ]; then
-        rm -f "$OUTPUT"
-    fi
+    [ -n "$CURRENT_OUTPUT" ] && rm -f "$CURRENT_OUTPUT"
 }
 
-trap cleanup INT TERM EXIT
+trap cleanup INT TERM
 
-#--[Tool Checks]------------------------------------------------------------
-case "$CONVERSION" in
-    video→audio|video→video|audio→audio)
-        if ! command -v ffmpeg >/dev/null 2>&1; then
-            echo "Error: ffmpeg not found"
-            echo ""
-            echo "On NixOS, install with:"
-            echo "  environment.systemPackages = with pkgs; [ ffmpeg ];"
-            echo ""
-            echo "Or run temporarily with:"
-            echo "  nix-shell -p ffmpeg --run 'tranz $*'"
-            exit 1
-        fi
-        ;;
-esac
+convert_one() {
+    local INPUT="$1"
+    local OUTPUT="$2"
+    CONVERT_PID=""
+    CURRENT_OUTPUT=""
 
-#--[Conversion]-------------------------------------------------------------
+    # Validate input exists
+    if [ ! -f "$INPUT" ]; then
+        echo "Warning: Input file not found, skipping: $INPUT"
+        return 1
+    fi
 
-printf "Converting"
-case "$CONVERSION" in
-    video→audio)
-        # Extract audio from video with appropriate codec
-        case "$OUTPUT_EXT_LOWER" in
-            flac)
-                ffmpeg -i "$INPUT" -vn -acodec flac "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-            mp3)
-                ffmpeg -i "$INPUT" -vn -acodec libmp3lame -q:a 2 "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-            wav)
-                ffmpeg -i "$INPUT" -vn -acodec pcm_s16le "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-            *)
-                ffmpeg -i "$INPUT" -vn "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-        esac
-        ;;
+    # Auto-generate output filename if only extension provided
+    if [[ "$OUTPUT" == .* ]]; then
+        OUTPUT="${INPUT%.*}$OUTPUT"
+    fi
 
-    video→video)
-        ffmpeg -i "$INPUT" "$OUTPUT" -y >/dev/null 2>&1 &
-        ;;
+    # Check if output already exists
+    if [ -f "$OUTPUT" ]; then
+        echo "Warning: Output already exists, skipping: $OUTPUT"
+        return 1
+    fi
 
-    audio→audio)
-        case "$OUTPUT_EXT_LOWER" in
-            flac)
-                ffmpeg -i "$INPUT" -acodec flac "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-            mp3)
-                ffmpeg -i "$INPUT" -acodec libmp3lame -q:a 2 "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-            wav)
-                ffmpeg -i "$INPUT" -acodec pcm_s16le "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-            *)
-                ffmpeg -i "$INPUT" "$OUTPUT" -y >/dev/null 2>&1 &
-                ;;
-        esac
-        ;;
+    # Extract extensions
+    local INPUT_EXT="${INPUT##*.}"
+    local OUTPUT_EXT="${OUTPUT##*.}"
+    local INPUT_EXT_LOWER OUTPUT_EXT_LOWER
+    INPUT_EXT_LOWER=$(echo "$INPUT_EXT" | tr '[:upper:]' '[:lower:]')
+    OUTPUT_EXT_LOWER=$(echo "$OUTPUT_EXT" | tr '[:upper:]' '[:lower:]')
 
-    image→image)
-        # Delegate to imagemagick
-        if ! command -v magick >/dev/null; then
-            echo ""
-            echo "Error: ImageMagick not found. Install it with:"
-            echo "  sudo apt install imagemagick"
-            exit 1
-        fi
+    local INPUT_TYPE OUTPUT_TYPE CONVERSION
+    INPUT_TYPE=$(get_format_type "$INPUT_EXT_LOWER")
+    OUTPUT_TYPE=$(get_format_type "$OUTPUT_EXT_LOWER")
+    CONVERSION="${INPUT_TYPE}→${OUTPUT_TYPE}"
 
-        # Use fine-tuned quality settings for WebP conversion
-        if [ "$OUTPUT_EXT_LOWER" = "webp" ]; then
-            case "$INPUT_EXT_LOWER" in
-                heic|heif)
-                    magick "$INPUT" -quality 78 "$OUTPUT" &
-                    ;;
-                jpg|jpeg)
-                    magick "$INPUT" -quality 50 "$OUTPUT" &
-                    ;;
-                png)
-                    magick "$INPUT" -quality 76 "$OUTPUT" &
-                    ;;
-                *)
-                    magick "$INPUT" "$OUTPUT" &
-                    ;;
-            esac
-        else
-            magick "$INPUT" "$OUTPUT" &
-        fi
-        ;;
-
-    video→text|audio→text)
-        # Detect which whisper implementation to use
-        WHISPER_TYPE=$(detect_whisper)
-        if [ $? -ne 0 ]; then
-            exit 1
-        fi
-
-        if [ "$WHISPER_TYPE" = "cli" ]; then
-            # Use whisper-cpp
-            MODEL_PATH=$(ensure_whisper_model "$WHISPER_MODEL")
-            if [ $? -ne 0 ]; then
-                exit 1
-            fi
-
-            # whisper-cli needs WAV format - convert if needed
-            AUDIO_INPUT="$INPUT"
-            TEMP_WAV=""
-            if [ "$INPUT_EXT_LOWER" != "wav" ]; then
-                TEMP_WAV="/tmp/tranz-$$.wav"
-                if ! ffmpeg -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TEMP_WAV" -y >/dev/null 2>&1; then
-                    echo "Error: Failed to convert audio to WAV" >&2
-                    exit 1
-                fi
-                AUDIO_INPUT="$TEMP_WAV"
-            fi
-
-            # Determine output format flag
-            case "$OUTPUT_EXT_LOWER" in
-                srt)
-                    FORMAT_FLAG="--output-srt"
-                    ;;
-                json)
-                    FORMAT_FLAG="--output-json"
-                    ;;
-                txt|*)
-                    FORMAT_FLAG="--output-txt"
-                    ;;
-            esac
-
-            # Run whisper-cli
-            OUTPUT_BASE="${OUTPUT%.*}"
-            whisper-cli -m "$MODEL_PATH" -f "$AUDIO_INPUT" -of "$OUTPUT_BASE" $FORMAT_FLAG -l auto --no-prints >/dev/null 2>&1 &
-
-            # Store temp file for cleanup later
-            WHISPER_TEMP_WAV="$TEMP_WAV"
-
-        else
-            # Use Python faster-whisper
-            if [ ! -f "$WHISPER_PATH" ]; then
+    # Tool checks
+    case "$CONVERSION" in
+        video→audio|video→video|audio→audio)
+            if ! command -v ffmpeg >/dev/null 2>&1; then
+                echo "Error: ffmpeg not found"
                 echo ""
-                echo "Error: Whisper Python not found at: $WHISPER_PATH"
-                echo "Set WHISPER_PATH in the script or install whisper-cpp"
-                exit 1
+                echo "On NixOS, install with:"
+                echo "  environment.systemPackages = with pkgs; [ ffmpeg ];"
+                echo ""
+                echo "Or run temporarily with:"
+                echo "  nix-shell -p ffmpeg --run 'tranz $*'"
+                return 1
+            fi
+            ;;
+    esac
+
+    CURRENT_OUTPUT="$OUTPUT"
+    printf "Converting %s" "$(basename "$INPUT")"
+
+    case "$CONVERSION" in
+        video→audio)
+            case "$OUTPUT_EXT_LOWER" in
+                flac) ffmpeg -i "$INPUT" -vn -acodec flac "$OUTPUT" -y >/dev/null 2>&1 & ;;
+                mp3)  ffmpeg -i "$INPUT" -vn -acodec libmp3lame -q:a 2 "$OUTPUT" -y >/dev/null 2>&1 & ;;
+                wav)  ffmpeg -i "$INPUT" -vn -acodec pcm_s16le "$OUTPUT" -y >/dev/null 2>&1 & ;;
+                *)    ffmpeg -i "$INPUT" -vn "$OUTPUT" -y >/dev/null 2>&1 & ;;
+            esac
+            ;;
+
+        video→video)
+            ffmpeg -i "$INPUT" "$OUTPUT" -y >/dev/null 2>&1 &
+            ;;
+
+        audio→audio)
+            case "$OUTPUT_EXT_LOWER" in
+                flac) ffmpeg -i "$INPUT" -acodec flac "$OUTPUT" -y >/dev/null 2>&1 & ;;
+                mp3)  ffmpeg -i "$INPUT" -acodec libmp3lame -q:a 2 "$OUTPUT" -y >/dev/null 2>&1 & ;;
+                wav)  ffmpeg -i "$INPUT" -acodec pcm_s16le "$OUTPUT" -y >/dev/null 2>&1 & ;;
+                *)    ffmpeg -i "$INPUT" "$OUTPUT" -y >/dev/null 2>&1 & ;;
+            esac
+            ;;
+
+        image→image)
+            if ! command -v magick >/dev/null; then
+                echo ""
+                echo "Error: ImageMagick not found. Install it with:"
+                echo "  sudo apt install imagemagick"
+                return 1
             fi
 
-            # Run transcription in background
-            if [ "$OUTPUT_EXT_LOWER" = "srt" ]; then
-                "$WHISPER_PATH" -c "
+            if [ "$OUTPUT_EXT_LOWER" = "webp" ]; then
+                case "$INPUT_EXT_LOWER" in
+                    heic|heif) magick "$INPUT" -quality 78 "$OUTPUT" & ;;
+                    jpg|jpeg)  magick "$INPUT" -quality 50 "$OUTPUT" & ;;
+                    png)       magick "$INPUT" -quality 76 "$OUTPUT" & ;;
+                    *)         magick "$INPUT" "$OUTPUT" & ;;
+                esac
+            else
+                magick "$INPUT" "$OUTPUT" &
+            fi
+            ;;
+
+        video→text|audio→text)
+            local WHISPER_TYPE
+            WHISPER_TYPE=$(detect_whisper) || return 1
+
+            if [ "$WHISPER_TYPE" = "cli" ]; then
+                local MODEL_PATH
+                MODEL_PATH=$(ensure_whisper_model "$WHISPER_MODEL") || return 1
+
+                local AUDIO_INPUT="$INPUT"
+                local TEMP_WAV=""
+                if [ "$INPUT_EXT_LOWER" != "wav" ]; then
+                    TEMP_WAV="/tmp/tranz-$$.wav"
+                    if ! ffmpeg -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TEMP_WAV" -y >/dev/null 2>&1; then
+                        echo "Error: Failed to convert audio to WAV" >&2
+                        return 1
+                    fi
+                    AUDIO_INPUT="$TEMP_WAV"
+                fi
+
+                local FORMAT_FLAG
+                case "$OUTPUT_EXT_LOWER" in
+                    srt)  FORMAT_FLAG="--output-srt" ;;
+                    json) FORMAT_FLAG="--output-json" ;;
+                    *)    FORMAT_FLAG="--output-txt" ;;
+                esac
+
+                local OUTPUT_BASE="${OUTPUT%.*}"
+                whisper-cli -m "$MODEL_PATH" -f "$AUDIO_INPUT" -of "$OUTPUT_BASE" $FORMAT_FLAG -l auto --no-prints >/dev/null 2>&1 &
+
+            else
+                if [ ! -f "$WHISPER_PATH" ]; then
+                    echo ""
+                    echo "Error: Whisper Python not found at: $WHISPER_PATH"
+                    return 1
+                fi
+
+                if [ "$OUTPUT_EXT_LOWER" = "srt" ]; then
+                    "$WHISPER_PATH" -c "
 from faster_whisper import WhisperModel
 
 def format_timestamp(seconds):
@@ -329,8 +296,8 @@ with open('$OUTPUT', 'w', encoding='utf-8') as f:
         f.write(f'{format_timestamp(segment.start)} --> {format_timestamp(segment.end)}\n')
         f.write(f'{segment.text.strip()}\n\n')
 " &
-            elif [ "$OUTPUT_EXT_LOWER" = "json" ]; then
-                "$WHISPER_PATH" -c "
+                elif [ "$OUTPUT_EXT_LOWER" = "json" ]; then
+                    "$WHISPER_PATH" -c "
 import json
 from faster_whisper import WhisperModel
 
@@ -354,8 +321,8 @@ output = {
 with open('$OUTPUT', 'w', encoding='utf-8') as f:
     json.dump(output, f, indent=2, ensure_ascii=False)
 " &
-            else
-                "$WHISPER_PATH" -c "
+                else
+                    "$WHISPER_PATH" -c "
 from faster_whisper import WhisperModel
 
 model = WhisperModel('$WHISPER_MODEL', device='$WHISPER_DEVICE', compute_type='$WHISPER_COMPUTE')
@@ -365,56 +332,65 @@ with open('$OUTPUT', 'w', encoding='utf-8') as f:
     for segment in segments:
         f.write(segment.text.strip() + '\n')
 " &
+                fi
             fi
-        fi
-        ;;
+            ;;
 
-    *)
-        echo ""
-        echo "Error: Unsupported conversion: $INPUT_EXT → $OUTPUT_EXT"
-        echo ""
-        echo "Supported conversions:"
-        echo "  Video → Audio: mkv/mp4/avi/webm → mp3/flac/wav/aac/ogg"
-        echo "  Video → Video: mkv/mp4/avi/mov/webm ↔ mkv/mp4/avi/mov/webm"
-        echo "  Video → Text:  mkv/mp4/avi/webm → txt/srt/json (whisper)"
-        echo "  Audio → Audio: mp3/flac/wav/aac/ogg ↔ mp3/flac/wav/aac/ogg"
-        echo "  Audio → Text:  mp3/flac/wav/aac/ogg/m4a/webm → txt/srt/json"
-        echo "  Image → Image: jpg/png/gif/bmp/webp ↔ jpg/png/gif/bmp/webp"
-        exit 1
-        ;;
-esac
+        *)
+            printf " — skipping (unsupported: %s → %s)\n" "$INPUT_EXT_LOWER" "$OUTPUT_EXT_LOWER"
+            CURRENT_OUTPUT=""
+            return 1
+            ;;
+    esac
 
-# Capture PID and show loading animation
-CONVERT_PID=$!
-DOTS=""
-while kill -0 $CONVERT_PID 2>/dev/null; do
-    printf "\rConverting%-3s" "$DOTS"
-    DOTS="${DOTS}."
-    if [ ${#DOTS} -gt 3 ]; then DOTS=""; fi
-    sleep 0.3
+    # Wait for conversion
+    CONVERT_PID=$!
+    local DOTS=""
+    while kill -0 "$CONVERT_PID" 2>/dev/null; do
+        printf "\rConverting %s%-3s" "$(basename "$INPUT")" "$DOTS"
+        DOTS="${DOTS}."
+        [ ${#DOTS} -gt 3 ] && DOTS=""
+        sleep 0.3
+    done
+    wait "$CONVERT_PID"
+    local EXIT_CODE=$?
+
+    if [ $EXIT_CODE -ne 0 ] || [ ! -f "$OUTPUT" ]; then
+        printf "\rFailed: %s\n" "$(basename "$INPUT")"
+        rm -f "$OUTPUT"
+        CURRENT_OUTPUT=""
+        return 1
+    fi
+
+    printf "\rDone: %s → %s\n" "$(basename "$INPUT")" "$(basename "$OUTPUT")"
+
+    # Cleanup temp WAV if created
+    [ -n "${TEMP_WAV:-}" ] && rm -f "$TEMP_WAV"
+
+    CURRENT_OUTPUT=""
+    CONVERT_PID=""
+
+    [ "$KEEP_ORIGINAL" = false ] && rm "$INPUT"
+    return 0
+}
+
+#--[Main Loop]--------------------------------------------------------------
+
+SKIP_COUNT=0
+FAIL_COUNT=0
+OK_COUNT=0
+
+for INPUT in "${INPUTS[@]}"; do
+    if convert_one "$INPUT" "$OUTPUT_ARG"; then
+        (( OK_COUNT++ ))
+    else
+        # distinguish skip (unsupported) from fail — both increment fail for simplicity
+        (( FAIL_COUNT++ ))
+    fi
 done
-wait $CONVERT_PID
-CONVERT_EXIT=$?
 
-if [ $CONVERT_EXIT -ne 0 ]; then
-    printf "\rConversion failed\n"
-    exit 1
+# Summary for batch runs
+if [ "${#INPUTS[@]}" -gt 1 ]; then
+    echo "---"
+    echo "Done: $OK_COUNT converted, $FAIL_COUNT skipped/failed"
 fi
-
-# Verify output was created
-if [ ! -f "$OUTPUT" ]; then
-    printf "\rConversion failed - no output generated\n"
-    exit 1
-fi
-
-SUCCESS=true
-
-# Cleanup temp WAV if created
-[ -n "$WHISPER_TEMP_WAV" ] && rm -f "$WHISPER_TEMP_WAV"
-
-# Remove original if requested
-if [ "$KEEP_ORIGINAL" = false ]; then
-    rm "$INPUT"
-fi
-
-printf "\rDone          \n"

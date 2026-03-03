@@ -11,7 +11,7 @@ for metric in "${metrics[@]}"; do
                 /^CPU:/ {gsub(/%/,"",$2); cpu=$2}
                 END {if(cpu) printf "%.0f", cpu}
             ')
-            temp=$(sensors 2>/dev/null | grep -E '^(Package id 0|Core 0|temp1):' | head -1 | sed 's/^[^+]*+\([0-9.]*\).*/\1/')
+            temp=$(sensors 2>/dev/null | grep -E '^(Package id 0|Tctl|Core 0):' | head -1 | sed 's/^[^+]*+\([0-9.]*\).*/\1/')
             cur_freq=$(awk '{sum+=$1; count++} END {if(count>0) printf "%.1f", sum/count/1000000}' /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null)
             max_freq=$(awk '{print $1/1000000; exit}' /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
             freq_str=""
