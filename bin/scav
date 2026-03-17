@@ -86,7 +86,7 @@ while [[ $# -gt 0 && "$1" == -* ]]; do
     done
 done
 
-query="$1"
+query="${1#./}"  # strip leading ./ so "scav ./foo" works like "scav foo"
 
 if [[ -z "$query" ]]; then
     echo "scav: missing query pattern" >&2

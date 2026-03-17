@@ -178,6 +178,8 @@ fi
 
 if [ "$IS_SPLIT" = false ]; then
   case "$ARCHIVE" in
+  *.tar.gz|*.tgz|*.tar.bz2|*.tbz2|*.tar.xz|*.txz|*.tar)
+    ;;
   *.zip|*.bacpac|*.kra)
     check_dependency "unzip"
     unzip -q "$ARCHIVE" -d "$TEMP_EXTRACT_DIR" &

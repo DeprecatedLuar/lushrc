@@ -126,4 +126,3 @@ fi
 # Replace original file
 mv "$TEMP_MIME" "$MIMEAPPS"
 
-echo "✓ MIME defaults synced from defaults.sh"

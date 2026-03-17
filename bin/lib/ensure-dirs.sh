@@ -29,6 +29,7 @@ mkdir -p "$VIDEOS"
 mkdir -p "$WORKSPACE"
 mkdir -p "$TOOLS"
 mkdir -p "$PROJECTS"
+mkdir -p "$PROJECTS/scripts"
 mkdir -p "$SHARED"
 
 # Workspace tools subdirectories
@@ -56,7 +57,7 @@ if [[ "$1" == "-v" ]] || [[ "$1" == "--verbose" ]]; then
     echo "  Home: bin, Backup, Media, Documents, Downloads"
     echo "  Downloads cache: $DOWNLOADS_STAGE/previous"
     echo "  Media: Audio, Pictures, Videos"
-    echo "  Workspace: dev, shared, tools, docker"
+    echo "  Workspace: dev, dev/scripts, shared, tools, docker"
     echo "  Tools: bin"
     echo "  Shell: ~/.bashrc → $BASHRC/bashrc"
     echo "  Shell: ~/.profile → $BASHRC/profile"

@@ -6,6 +6,7 @@ source "$LIBDIR/ensure-dirs.sh"
 
 #--[MAKE SCRIPTS EXECUTABLE]-------------------
 
+chmod +x $PROJECTS/scripts/* 2>/dev/null || true
 chmod +x $TOOLS/bin/* 2>/dev/null || true
 chmod +x $TOOLS/bin/lib/* 2>/dev/null || true
 chmod +x $BASHRC/bin/* 2>/dev/null || true
