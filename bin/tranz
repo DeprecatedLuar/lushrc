@@ -80,6 +80,9 @@ get_format_type() {
         txt|srt|json)
             echo "text"
             ;;
+        docx|odt|rtf|epub|html|htm|rst|org|tex|md|markdown)
+            echo "document"
+            ;;
         *)
             echo "unknown"
             ;;
@@ -91,7 +94,7 @@ get_format_type() {
 # Handle flags
 while [[ "$1" == -* ]]; do
     case "$1" in
-        -r|--replace)
+        --rm)
             KEEP_ORIGINAL=false
             shift
             ;;
@@ -105,7 +108,7 @@ done
 # Validate arguments
 if [ "$#" -lt 2 ]; then
     echo "Usage: tranz [-r|--replace] <input_file...> <output_file|.ext>"
-    echo "  -r, --replace  Remove original after conversion (default: keep)"
+    echo "  --rm           Remove original after conversion (default: keep)"
     echo ""
     echo "Examples:"
     echo "  tranz video.mkv audio.flac       # Convert MKV to FLAC audio"
@@ -334,6 +337,14 @@ with open('$OUTPUT', 'w', encoding='utf-8') as f:
 " &
                 fi
             fi
+            ;;
+
+        document→text|document→document)
+            if ! command -v markitdown >/dev/null 2>&1; then
+                echo "Error: markitdown not found"
+                return 1
+            fi
+            markitdown "$INPUT" > "$OUTPUT" 2>/dev/null &
             ;;
 
         *)
