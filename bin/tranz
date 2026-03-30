@@ -4,6 +4,7 @@
 #--[Configuration]----------------------------------------------------------
 
 KEEP_ORIGINAL=true
+FORCE_OVERWRITE=false
 
 # Whisper settings
 WHISPER_PATH=""  # Custom whisper Python path (e.g., venv), empty = auto-detect
@@ -80,7 +81,7 @@ get_format_type() {
         txt|srt|json)
             echo "text"
             ;;
-        docx|odt|rtf|epub|html|htm|rst|org|tex|md|markdown)
+        docx|odt|rtf|epub|html|htm|rst|org|tex|md|markdown|pdf)
             echo "document"
             ;;
         *)
@@ -96,6 +97,10 @@ while [[ "$1" == -* ]]; do
     case "$1" in
         --rm)
             KEEP_ORIGINAL=false
+            shift
+            ;;
+        -f|--force)
+            FORCE_OVERWRITE=true
             shift
             ;;
         *)
@@ -117,6 +122,7 @@ if [ "$#" -lt 2 ]; then
     echo "  tranz -r old.avi new.mp4         # Convert and remove original"
     echo "  tranz ./*.png .webp              # Batch convert all PNGs to WebP"
     echo "  tranz ./* .webp                  # Batch convert all images to WebP (skips unsupported)"
+    echo "  tranz -f doc.docx doc.pdf        # Overwrite existing output"
     exit 1
 fi
 
@@ -164,7 +170,7 @@ convert_one() {
     fi
 
     # Check if output already exists
-    if [ -f "$OUTPUT" ]; then
+    if [ -f "$OUTPUT" ] && [ "$FORCE_OVERWRITE" = false ]; then
         echo "Warning: Output already exists, skipping: $OUTPUT"
         return 1
     fi
@@ -339,12 +345,42 @@ with open('$OUTPUT', 'w', encoding='utf-8') as f:
             fi
             ;;
 
-        document→text|document→document)
+        document→text)
             if ! command -v markitdown >/dev/null 2>&1; then
                 echo "Error: markitdown not found"
                 return 1
             fi
             markitdown "$INPUT" > "$OUTPUT" 2>/dev/null &
+            ;;
+
+        document→document)
+            if [ "$OUTPUT_EXT_LOWER" = "pdf" ]; then
+                if ! command -v libreoffice >/dev/null 2>&1; then
+                    echo ""
+                    echo "Error: libreoffice not found"
+                    echo ""
+                    echo "On NixOS, install with:"
+                    echo "  environment.systemPackages = with pkgs; [ libreoffice ];"
+                    echo ""
+                    echo "Or run temporarily with:"
+                    echo "  nix-shell -p libreoffice --run 'tranz $*'"
+                    return 1
+                fi
+                local OUT_DIR EXPECTED_PDF
+                OUT_DIR=$(dirname "$OUTPUT")
+                EXPECTED_PDF="$OUT_DIR/$(basename "${INPUT%.*}").pdf"
+                (
+                    libreoffice --headless --convert-to pdf --outdir "$OUT_DIR" "$INPUT" >/dev/null 2>&1 || exit 1
+                    [ "$EXPECTED_PDF" != "$OUTPUT" ] && mv "$EXPECTED_PDF" "$OUTPUT" 2>/dev/null
+                    true
+                ) &
+            else
+                if ! command -v markitdown >/dev/null 2>&1; then
+                    echo "Error: markitdown not found"
+                    return 1
+                fi
+                markitdown "$INPUT" > "$OUTPUT" 2>/dev/null &
+            fi
             ;;
 
         *)
