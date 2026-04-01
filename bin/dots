@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+source "$LIBDIR/gh-install.sh"
+gh_install "dots" "DeprecatedLuar/ireallylovemydots" "$@"
