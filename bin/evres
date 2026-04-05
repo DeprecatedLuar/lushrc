@@ -89,6 +89,11 @@ HTML=$(curl -sf --connect-timeout 5 "$BASE/" 2>/dev/null) || {
 mapfile -t NAMES < <(echo "$HTML" | grep -oP '(?<=class="file-name">)[^<]+')
 mapfile -t SIZES < <(echo "$HTML" | grep -oP '(?<=class="file-size">)[^<]+')
 
+declare -A FILE_SIZE
+for i in "${!NAMES[@]}"; do
+  FILE_SIZE["${NAMES[$i]}"]="${SIZES[$i]:-}"
+done
+
 if [[ ${#NAMES[@]} -eq 0 ]]; then
   echo "  error: no files found (is this a serve instance?)" >&2
   exit 1
@@ -127,9 +132,11 @@ fi
 
 # ── download ──────────────────────────────────────────────────────────────────
 echo ""
-for name in "${SELECTED[@]}"; do
-  printf "  ↓ %s\n" "$name"
-  curl -sf -O "$BASE/$name"
+total=${#SELECTED[@]}
+for i in "${!SELECTED[@]}"; do
+  name="${SELECTED[$i]}"
+  printf "  ↓ [%d/%d] %s (%s)\n" "$((i+1))" "$total" "$name" "${FILE_SIZE[$name]:-}"
+  curl -f --progress-bar -O "$BASE/$name"
 done
 
 echo ""
