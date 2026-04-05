@@ -93,4 +93,5 @@ if [[ -z "$query" ]]; then
     exit 1
 fi
 
+command -v fd &>/dev/null || { echo "fd not found" >&2; exit 1; }
 fd $TYPE_FLAG "$query" ~ 2>/dev/null | head -n "$LIMIT"

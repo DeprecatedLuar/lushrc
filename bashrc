@@ -181,3 +181,5 @@ if [[ $- == *i* ]]; then
     # Starship prompt
     command -v starship &>/dev/null && eval "$(starship init bash)"
 fi
+
+alias feh='feh --action "wl-copy --type $(file --mime-type -b %F) < %F"'

@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
+LIBDIR="${LIBDIR:-$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib}"
 source "$LIBDIR/gh-install.sh"
 gh_install "dots" "DeprecatedLuar/ireallylovemydots" "$@"

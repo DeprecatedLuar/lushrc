@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# rec - unified recording: screen, desktop audio, mic
+
+STATE="/tmp/rec.state"
+OUT_DIR="${XDG_VIDEOS_DIR:-$HOME/Videos}"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+
+_die()     { echo "$*" >&2; exit 1; }
+_log()     { echo "$*"; }
+_need()    { command -v "$1" &>/dev/null || _die "$1 not found"; }
+
+_load_state() {
+    [[ -f "$STATE" ]] || return 1
+    # shellcheck disable=SC1090
+    source "$STATE"
+}
+
+_save_state() {
+    printf 'PID=%s\nFILE=%s\nMODE=%s\n' "$1" "$2" "$3" > "$STATE"
+}
+
+_alive() {
+    kill -0 "$PID" 2>/dev/null
+}
+
+_wait_exit() {
+    local timeout=20
+    while _alive && (( timeout-- > 0 )); do sleep 0.3; done
+}
+
+_audio_fmt() {
+    command -v pactl &>/dev/null && echo pulse || echo pipewire
+}
+
+_get_monitor() {
+    if command -v pactl &>/dev/null; then
+        pactl list short sources 2>/dev/null | awk '/\.monitor/{print $2; exit}'
+    else
+        wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null \
+            | awk -F'"' '/node\.name/{print $2".monitor"; exit}'
+    fi
+}
+
+_get_mic() {
+    if command -v pactl &>/dev/null; then
+        pactl list short sources 2>/dev/null | awk '!/\.monitor/{print $2; exit}'
+    else
+        wpctl inspect @DEFAULT_AUDIO_SOURCE@ 2>/dev/null \
+            | awk -F'"' '/node\.name/{print $2; exit}'
+    fi
+}
+
+cmd_status() {
+    if _load_state && _alive; then
+        _log "recording [$MODE] → $FILE"
+    else
+        _log "not recording"
+    fi
+}
+
+cmd_stop() {
+    _load_state || { _log "not recording"; return; }
+    _alive || { _log "not recording"; rm -f "$STATE"; return; }
+    kill -SIGINT "$PID" 2>/dev/null
+    _wait_exit
+    _log "saved: $FILE"
+    rm -f "$STATE"
+}
+
+cmd_delete() {
+    _load_state || { _log "not recording"; return; }
+    local file="$FILE" pid="$PID"
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -SIGINT "$pid" 2>/dev/null
+        _wait_exit
+    fi
+    rm -f "$file" "$STATE"
+    _log "deleted: $file"
+}
+
+cmd_screen() {
+    _load_state && _alive && _die "already recording [$MODE]"
+    _need wf-recorder
+
+    local audio=desktop mute=false
+    for arg in "$@"; do
+        case "$arg" in
+            --no-audio|--mute) mute=true ;;
+            --mic)             audio=mic ;;
+        esac
+    done
+
+    local file="$OUT_DIR/rec_${TIMESTAMP}.mp4"
+    mkdir -p "$OUT_DIR"
+
+    local -a args=(-f "$file")
+
+    if ! $mute; then
+        if [[ "$audio" == mic ]]; then
+            local mic; mic=$(_get_mic)
+            args+=(--audio "${mic:-default}")
+        else
+            local monitor; monitor=$(_get_monitor)
+            [[ -n "$monitor" ]] || _die "no audio monitor found (use --mute to skip audio)"
+            args+=(--audio "$monitor")
+        fi
+    fi
+
+    wf-recorder "${args[@]}" &>/dev/null &
+    _save_state "$!" "$file" "screen${mute:++mute}${audio:+:$audio}"
+    _log "recording screen → $file"
+}
+
+cmd_audio() {
+    _load_state && _alive && _die "already recording [$MODE]"
+    _need ffmpeg
+
+    local monitor; monitor=$(_get_monitor)
+    [[ -n "$monitor" ]] || _die "no audio monitor found"
+
+    local file="$OUT_DIR/rec_${TIMESTAMP}.flac"
+    mkdir -p "$OUT_DIR"
+
+    ffmpeg -loglevel error -f "$(_audio_fmt)" -i "$monitor" -c:a flac "$file" &>/dev/null &
+    _save_state "$!" "$file" "audio"
+    _log "recording desktop audio → $file"
+}
+
+cmd_mic() {
+    _load_state && _alive && _die "already recording [$MODE]"
+    _need ffmpeg
+
+    local file="$OUT_DIR/rec_${TIMESTAMP}.flac"
+    mkdir -p "$OUT_DIR"
+
+    local mic; mic=$(_get_mic)
+    ffmpeg -loglevel error -f "$(_audio_fmt)" -i "${mic:-default}" -c:a flac "$file" &>/dev/null &
+    _save_state "$!" "$file" "mic"
+    _log "recording mic → $file"
+}
+
+cmd_check() {
+    local ok=true
+    for dep in ffmpeg wf-recorder; do
+        if command -v "$dep" &>/dev/null; then
+            echo "  [ok] $dep"
+        else
+            echo "  [missing] $dep"
+            ok=false
+        fi
+    done
+    if command -v pactl &>/dev/null; then
+        echo "  [ok] pactl (audio backend)"
+    elif command -v wpctl &>/dev/null; then
+        echo "  [ok] wpctl (audio backend)"
+    else
+        echo "  [missing] audio backend (need pactl or wpctl)"
+        ok=false
+    fi
+    $ok || { echo ""; _die "some dependencies missing"; }
+}
+
+case "$1" in
+    deps)          cmd_check ;;
+    screen) shift; cmd_screen "$@" ;;
+    audio)         cmd_audio ;;
+    mic)           cmd_mic ;;
+    stop)          cmd_stop ;;
+    delete)        cmd_delete ;;
+    status)        cmd_status ;;
+    *)
+        echo "usage: rec <command> [options]"
+        echo ""
+        echo "  rec screen             record screen + desktop audio"
+        echo "  rec screen --mic       record screen + microphone"
+        echo "  rec screen --mute      record screen, no audio"
+        echo "  rec audio              record desktop audio only"
+        echo "  rec mic                record microphone only"
+        echo "  rec stop               stop and save"
+        echo "  rec delete             stop and discard"
+        echo "  rec status             show recording state"
+        ;;
+esac

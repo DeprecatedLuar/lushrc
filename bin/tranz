@@ -90,6 +90,29 @@ get_format_type() {
     esac
 }
 
+#--[Dependency Check]-------------------------------------------------------
+
+if [[ "${1:-}" == "deps" ]]; then
+    declare -A optional=(
+        [ffmpeg]="audio/video conversion"
+        [magick]="image conversion"
+        [whisper-cli]="audio/video transcription"
+        [markitdown]="document conversion"
+        [libreoffice]="document to PDF"
+    )
+    ok=true
+    for dep in "${!optional[@]}"; do
+        if command -v "$dep" &>/dev/null; then
+            printf "  [ok]      %-20s %s\n" "$dep" "${optional[$dep]}"
+        else
+            printf "  [missing] %-20s %s\n" "$dep" "${optional[$dep]}"
+            ok=false
+        fi
+    done
+    $ok || { echo ""; echo "some dependencies missing (all optional, needed per conversion type)"; exit 1; }
+    exit 0
+fi
+
 #--[Argument Parsing]-------------------------------------------------------
 
 # Handle flags

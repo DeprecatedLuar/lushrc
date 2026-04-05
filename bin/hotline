@@ -320,9 +320,28 @@ Examples:
 EOF
 }
 
+cmd_deps() {
+    declare -A deps=(
+        [tmux]="required"
+        [rofi]="GUI prompt (optional)"
+        [notify-send]="desktop notifications (optional)"
+    )
+    ok=true
+    for dep in "${!deps[@]}"; do
+        if command -v "$dep" &>/dev/null; then
+            printf "  [ok]      %-16s %s\n" "$dep" "${deps[$dep]}"
+        else
+            printf "  [missing] %-16s %s\n" "$dep" "${deps[$dep]}"
+            [[ "${deps[$dep]}" == "required" ]] && ok=false
+        fi
+    done
+    $ok || { echo ""; echo "missing required dependencies"; exit 1; }
+}
+
 case "$1" in
     "")              cmd_input ;;
     -h|--help|help)  show_help ;;
+    deps)            cmd_deps ;;
     pickup)          cmd_show ;;
     list)            cmd_list ;;
     yellowpage|ylpg) cmd_yellowpage ;;

@@ -157,5 +157,6 @@ echo "  ↗  http://${LOCAL_IP}:${PORT}"
 echo ""
 
 # ── start server ─────────────────────────────────────────────────────────────
+command -v python3 &>/dev/null || { echo "python3 not found" >&2; exit 1; }
 cd "$SERVE_DIR"
 python3 -m http.server "$PORT" --bind 0.0.0.0 2>/dev/null
