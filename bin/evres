@@ -107,24 +107,17 @@ declare -a SELECTED
 if $ALL; then
   SELECTED=("${NAMES[@]}")
 else
-  printf "  pick files (1 3, 1-3, a=all): "
+  printf "  pick: "
   read -r PICK
 
-  if [[ "$PICK" == "a" || "$PICK" == "all" ]]; then
-    SELECTED=("${NAMES[@]}")
-  else
-    for token in $PICK; do
-      if [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-        for (( i=${BASH_REMATCH[1]}; i<=${BASH_REMATCH[2]}; i++ )); do
-          idx=$(( i - 1 ))
-          [[ -n "${NAMES[$idx]:-}" ]] && SELECTED+=("${NAMES[$idx]}")
-        done
-      elif [[ "$token" =~ ^[0-9]+$ ]]; then
-        idx=$(( token - 1 ))
-        [[ -n "${NAMES[$idx]:-}" ]] && SELECTED+=("${NAMES[$idx]}")
-      fi
-    done
-  fi
+  [[ -z "$PICK" ]] && { echo "  cancelled"; exit 0; }
+
+  for token in $PICK; do
+    if [[ "$token" =~ ^[0-9]+$ ]]; then
+      idx=$(( token - 1 ))
+      [[ -n "${NAMES[$idx]:-}" ]] && SELECTED+=("${NAMES[$idx]}")
+    fi
+  done
 fi
 
 if [[ ${#SELECTED[@]} -eq 0 ]]; then
