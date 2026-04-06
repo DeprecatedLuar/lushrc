@@ -69,7 +69,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # Add dev tools to PATH (environment variables set in .bashrc)
 export PATH="$CARGO_HOME/bin:$PATH"           # Rust
-export PATH="$GOPATH/bin:$PATH"               # Go
+export GOBIN="$HOME/.local/bin"               # Go binaries → unified user bin
 export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"    # npm
 
 #==================== TERMINAL & RUNTIME ====================

@@ -140,12 +140,49 @@ hotline             # Open rofi prompt (GUI entry)
 
 History: `/tmp/hotline_history` with `!!` and `!-N` expansion
 
+### LAN File Sharing (serve / evres)
+Paired tools for quick local network file transfer.
+
+```bash
+serve                      # serve CWD files at http://<local-ip>:8080
+serve file1 file2 -p 9000  # specific files, custom port
+evres .13                  # consume from 192.168.1.13:8080 (subnet auto-detected)
+evres .13:9000             # custom port via suffix
+evres 192.168.1.13 --all   # full IP, download all non-interactively
+```
+
+`evres` parses the serve HTML listing and offers an interactive numbered picker. Empty input cancels. HTML template lives in `bin/lib/serve/share.html`.
+
 ### File Operations
 - **pw**: Path wrapper — resolves nav indices inline (`pw cat c/lushrc/bashrc`) or via substitution (`cat $(pw c/file)`)
 - **pack/unpack**: Universal archive handling (tar, zip, 7z, etc.)
 - **tx**: Navigation + file moving with undo (undo data in `/tmp/tx-undo-$USER/`)
 - **yoink/yeet**: Remote file transfer (rsync over SSH)
 - **dock/undock**: SSHFS mounting with nav-engine paths
+
+### Media Tools
+
+**rec** — unified screen/audio recorder (Wayland via `wf-recorder`, audio via `ffmpeg`):
+```bash
+rec screen              # screen + desktop audio → $XDG_VIDEOS_DIR
+rec screen --mic        # screen + microphone
+rec screen --mute       # screen only
+rec audio / rec mic     # audio-only recording
+rec stop / rec delete   # save or discard
+rec deps                # check dependencies
+```
+State persisted to `/tmp/rec.state` so stop/delete work across shells.
+
+**tranz** — universal file format converter (ffmpeg / ImageMagick / whisper-cpp / markitdown / libreoffice):
+```bash
+tranz video.mkv audio.flac       # extract audio
+tranz image.png .webp            # auto-name output
+tranz ./*.png .webp              # batch convert
+tranz video.mp4 transcript.txt   # transcribe via whisper
+tranz doc.docx doc.pdf           # document conversion
+tranz deps                       # check optional dependencies
+```
+Conversion routing is driven by input/output extension pairs (`video→audio`, `image→image`, etc.). Whisper config (model, device, compute type) is hardcoded at the top of the script.
 
 ### Path Management (path utility)
 Double-symlink chain for ephemeral PATH additions:
@@ -306,42 +343,3 @@ $LIBDIR/reload.sh
 | `bin/notsat` | `bin/lib/sat/*` | User package management | Multi-source package installer |
 | `bin/hotline` | tmux | Async task execution | Command launcher with notifications |
 
-### Why Nav-Engine is Central
-
-Nav-engine is the **architectural keystone** of lushrc:
-- **Every navigation tool depends on it**: tx, yoink, pw, z, wormhole all call nav-engine.sh
-- **Enables shorthand everywhere**: Users can type `w/dev` instead of full paths
-- **Fuzzy matching reduces friction**: No need to remember exact names
-- **Remote operations work**: Can bootstrap nav-engine via SSH for yoink/dock
-- **Consistent behavior**: Single resolution algorithm ensures predictable results
-
-Without nav-engine, every tool would implement its own path logic (DRY violation).
-
-### Why Symlink-Farm is Self-Healing
-
-Symlink-farm maintains command availability through:
-1. **Idempotent cleanup**: Removes broken links first (safe to run repeatedly)
-2. **Multiple sources**: Links from both BASHRC/bin and TOOLS/bin
-3. **Automatic sync**: Runs on every reload (after git pull, config changes)
-4. **UV integration**: Detects and links uv-installed tools
-5. **System-level option**: Can sync to /usr/local/bin with sudo
-
-This eliminates "command not found" errors after moving/deleting repos.
-
-### Workspace Organization (Current Structure)
-
-```
-Workspace/
-├── dev/              # Your active code projects (renamed from projects/)
-│   └── <repos>       # Git repos you're developing
-├── tools/            # External tools and cloned repos (not actively developing)
-│   └── bin/          # Tool binaries (symlinked to ~/bin)
-├── docker/           # Docker configurations and compose files
-├── krita/            # Krita art projects (.kra files)
-├── blender/          # Blender 3D projects (.blend files)
-├── kdenlive/         # Kdenlive video projects
-├── audacity/         # Audacity audio projects
-└── shared/           # Shared workspace resources
-```
-
-**Design Rationale**: Tool-specific folders (krita/, blender/, etc.) organize by file format since each tool produces distinct project files. `dev/` contains code repos, `tools/` contains dependencies/external repos.
