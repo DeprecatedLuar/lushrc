@@ -157,8 +157,21 @@ evres 192.168.1.13 --all   # full IP, download all non-interactively
 - **pw**: Path wrapper — resolves nav indices inline (`pw cat c/lushrc/bashrc`) or via substitution (`cat $(pw c/file)`)
 - **pack/unpack**: Universal archive handling (tar, zip, 7z, etc.)
 - **tx**: Navigation + file moving with undo (undo data in `/tmp/tx-undo-$USER/`)
-- **yoink/yeet**: Remote file transfer (rsync over SSH)
-- **dock/undock**: SSHFS mounting with nav-engine paths
+- **dock/undock**: SSHFS mounting — mounts remote path under `~/HOSTNAME[-subdir]` and `/tmp/dock/`
+
+**SSH tools (yoink, yeet, dock)** share a unified connection format:
+```bash
+[-p PORT] [-l USER] [user@]host[:port]
+```
+The `.N` subnet shorthand (via `net.sh`) works across all three:
+```bash
+yoink .17 w/project .          # pull from 192.168.1.17 using nav-engine path
+yoink .17:8022 file.txt        # custom port
+yeet backup.db vps d/backups   # push to remote nav-engine path
+yeet --rm data.sql .17         # push and delete local source
+dock user@host:port w/proj     # mount specific remote subdir
+```
+Flags: `--rm` (delete source after transfer), `-y`/`--yes` (skip confirm), `--log` (nav-engine debug)
 
 ### Media Tools
 
@@ -211,6 +224,12 @@ Place in `bin/lib/` with `.sh` extension. Source via:
 ```bash
 source "$LIBDIR/library-name.sh"
 ```
+
+**Existing libraries**:
+- `nav-engine.sh` — universal path resolver (see above)
+- `net.sh` — LAN utilities: `local_ip()` (detects primary IP via routing table) and `expand_local_ip()` (expands `.N` → `192.168.x.N`). Source in any script that deals with SSH/LAN hosts.
+- `spinner.sh` — dots progress indicator: `spin "Label" $PID [interval]`. Blocks until PID exits, then clears the line. Usage: `cmd & spin "Doing..." $!`
+- `sat/` — package manager source installers
 
 ### Adding Configuration Modules
 
@@ -268,11 +287,13 @@ Register in `bin/lib/sat/common.sh` arrays.
 
 ## Remote Operations
 
-SSH integration allows nav-engine on remote hosts:
+SSH integration allows nav-engine on remote hosts (bootstrapped by piping `nav-engine.sh` to the remote shell). All SSH tools accept `.N` subnet shorthand via `net.sh`.
+
 ```bash
-# Remote nav-engine is bootstrapped via: cat nav-engine.sh | ssh host bash -s -- w/path
-yoink ssh://host:w/project/file.txt .
-dock host w/workspace ~/remote-workspace
+yoink host w/project/file.txt .    # pull using nav-engine path on remote
+yoink .17 d/backup.db ~/backups    # LAN shorthand + local nav dest
+yeet ./dist vps w/deploy/          # push to remote nav-engine path
+dock host w/workspace              # mount remote dir → ~/hostname-workspace
 ```
 
 Enhanced SSH wrapper (`assh`) enables password prompts in non-interactive shells.
@@ -338,6 +359,8 @@ $LIBDIR/reload.sh
 | `bashrc` | None (entry point) | Shell init | Sets BASHRC, sources modules |
 | `modules/universal/paths.sh` | `xdg.sh` | Everything | Defines all environment vars |
 | `bin/lib/nav-engine.sh` | `paths.sh` (for env vars) | tx, pw, yoink, z, wormhole | Path resolution engine |
+| `bin/lib/net.sh` | None | dock, yoink, yeet, evres | LAN IP detection + `.N` shorthand |
+| `bin/lib/spinner.sh` | None | dock, yeet | Terminal progress dots |
 | `bin/lib/symlink-farm.sh` | `paths.sh` | `reload.sh` | Maintains symlink consistency |
 | `bin/lib/reload.sh` | `ensure-dirs.sh`, `symlink-farm.sh` | `reload` alias | Orchestrates config refresh |
 | `bin/notsat` | `bin/lib/sat/*` | User package management | Multi-source package installer |

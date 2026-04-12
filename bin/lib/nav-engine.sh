@@ -5,11 +5,13 @@
 # Parse flags
 DEBUG=false
 FILE_MODE=false
+LIMIT=1
 while [[ "$1" == -* ]]; do
     case "$1" in
         --dry-run) shift ;;  # nav-engine already just prints paths
         --log|--debug) DEBUG=true; shift ;;
         -f|--file) FILE_MODE=true; shift ;;
+        -n|--limit) LIMIT="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
@@ -265,11 +267,10 @@ find_best_match() {
 
     # Multiple matches - score them
     debug "  -> Scoring multiple matches..."
-    local best_match=""
-    local best_score=-999999
     local base_depth
     base_depth=$(echo "$search_base" | tr -cd '/' | wc -c)
 
+    local scored=()
     for match in "${matches[@]}"; do
         local dirname="${match##*/}"
 
@@ -300,15 +301,19 @@ find_best_match() {
 
         debug "     [$score] $match (depth=$depth, len_diff=$len_diff, pos=$position)"
 
-        if [[ $score -gt $best_score ]]; then
-            best_score=$score
-            best_match="$match"
-        fi
+        scored+=("$score:$match")
     done
 
-    debug "  -> Best match (score=$best_score): $best_match"
+    # Sort by score descending, emit top LIMIT results
+    local emitted=0
+    while IFS= read -r entry; do
+        local path="${entry#*:}"
+        debug "  -> Result $((emitted+1)) (score=${entry%%:*}): $path"
+        echo "$path"
+        (( emitted++ ))
+        [[ $emitted -ge $LIMIT ]] && break
+    done < <(printf '%s\n' "${scored[@]}" | sort -t: -k1 -rn)
 
-    echo "$best_match"
     return 0
 }
 

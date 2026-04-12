@@ -1,157 +1,140 @@
 #!/usr/bin/env bash
-# yeet - send files to remote machines via nav-engine
+# yeet - send files to remote machines
 
 set -euo pipefail
 
-COPY_MODE=false
+LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
+source "$LIBDIR/net.sh"
+source "$LIBDIR/spinner.sh"
+
+REMOVE_SOURCE=false
 SKIP_CONFIRM=false
 NAV_FLAGS=""
+CONN_USER=""
+CONN_HOST=""
+CONN_PORT=""
+FLAG_PORT=""
 
-POSITIONAL=()
-for arg in "$@"; do
-    case "$arg" in
-        -c|--copy) COPY_MODE=true ;;
-        -l|--luck) SKIP_CONFIRM=true ;;
-        --log) NAV_FLAGS="--log" ;;
-        -*|yoink) ;;
-        *) POSITIONAL+=("$arg") ;;
+POSITIONALS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --rm)           REMOVE_SOURCE=true; shift ;;
+        -y|--yes)       SKIP_CONFIRM=true; shift ;;
+        --log)          NAV_FLAGS="--log"; shift ;;
+        -p)             FLAG_PORT="$2"; shift 2 ;;
+        -l)             CONN_USER="$2"; shift 2 ;;
+        -*)             echo "Unknown option: $1" >&2; exit 1 ;;
+        *)              POSITIONALS+=("$1"); shift ;;
     esac
 done
-set -- "${POSITIONAL[@]}"
+set -- "${POSITIONALS[@]}"
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: yeet [-c] <source> <host:destination>"
+    echo "Usage: yeet [--rm] [-y] [-p PORT] [-l USER] local_source [user@]host[:port] [remote_path]"
     echo ""
     echo "Examples:"
-    echo "  yeet file.txt nuremberg:~            # send to home"
-    echo "  yeet backup.db vps:d                 # send to Downloads"
-    echo "  yeet -c project/ server:w/backups    # copy (keep source)"
-    echo "  yeet data.tar.gz user@host:~/data    # specify user"
-    echo ""
-    echo "Options:"
-    echo "  -c, --copy    Keep source after transfer (default: move)"
-    echo "  -l, --luck    Skip confirmation prompt"
-    echo "  --log         Show nav-engine resolution debug info"
-    echo ""
-    echo "Resolves remote path via nav-engine."
+    echo "  yeet file.txt nuremberg              # send to remote \$HOME"
+    echo "  yeet backup.db .17:8022              # send to LAN host"
+    echo "  yeet project/ vps d/backups          # nav-engine remote path"
+    echo "  yeet --rm data.sql server w/data     # send and delete local source"
     exit 1
 fi
 
-# First arg is source, second is host:destination
-SOURCE="$1"
-REMOTE="$2"
+LOCAL_SOURCE="$1"
 
-# Split host:destination
-if [[ ! "$REMOTE" =~ : ]]; then
-    echo "yeet: invalid format, expected host:destination" >&2
-    exit 1
+# --- Normalize host ---
+local_input="$2"
+if [[ "$local_input" == *@* ]]; then
+    CONN_USER="${local_input%%@*}"
+    local_input="${local_input#*@}"
 fi
+if [[ "$local_input" == *:* ]]; then
+    COLON_PORT="${local_input##*:}"
+    CONN_HOST="${local_input%:*}"
+    if [[ -n "$FLAG_PORT" && "$FLAG_PORT" != "$COLON_PORT" ]]; then
+        echo "Error: conflicting ports (-p $FLAG_PORT vs :$COLON_PORT)" >&2
+        exit 1
+    fi
+    CONN_PORT="$COLON_PORT"
+else
+    CONN_HOST="$local_input"
+fi
+[[ -n "$FLAG_PORT" && -z "$CONN_PORT" ]] && CONN_PORT="$FLAG_PORT"
+CONN_HOST=$(expand_local_ip "$CONN_HOST") || exit 1
 
-HOST="${REMOTE%%:*}"
-DEST_QUERY="${REMOTE#*:}"
-ITEMS=("$SOURCE")
+DEST_QUERY="${3:-~}"
 
-# If shell expanded ~ to local $HOME, convert back to ~ for remote
-[[ "$DEST_QUERY" == "$HOME" || "$DEST_QUERY" == "$HOME/"* ]] && DEST_QUERY="~${DEST_QUERY#$HOME}"
+SSH_ARGS=()
+[[ -n "$CONN_PORT" ]] && SSH_ARGS+=("-p" "$CONN_PORT")
+[[ -n "$CONN_USER" ]] && SSH_TARGET="$CONN_USER@$CONN_HOST" || SSH_TARGET="$CONN_HOST"
 
-# Resolve destination on remote via SSH (bootstrap nav-engine)
-DEST=$(cat "$LIBDIR/nav-engine.sh" | ssh "$HOST" "TERM=dumb bash -s -- '$DEST_QUERY'" 2>/dev/null) || {
-    echo "yeet: failed to resolve '$DEST_QUERY' on $HOST" >&2
+# --- Resolve remote path via nav-engine ---
+DEST=$(cat "$LIBDIR/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+    "TERM=dumb bash -s -- $NAV_FLAGS '$DEST_QUERY'" 2>/dev/null) || {
+    echo "yeet: failed to resolve '$DEST_QUERY' on $SSH_TARGET" >&2
     exit 1
 }
 
-# Check if rsync is available on remote
-if ! ssh "$HOST" "command -v rsync >/dev/null 2>&1"; then
-    echo "yeet: rsync not found on $HOST" >&2
+if ! ssh "${SSH_ARGS[@]}" "$SSH_TARGET" "command -v rsync >/dev/null 2>&1"; then
+    echo "yeet: rsync not found on $SSH_TARGET" >&2
     exit 1
 fi
 
 if [[ "$SKIP_CONFIRM" == false ]]; then
-    # Check if source exists locally
-    if [[ ! -e "$SOURCE" ]]; then
-        echo "yeet: source not found: $SOURCE" >&2
+    if [[ ! -e "$LOCAL_SOURCE" ]]; then
+        echo "yeet: source not found: $LOCAL_SOURCE" >&2
         exit 1
     fi
 
     echo "Yeeting:"
-    echo -e "  \033[34m$SOURCE\033[0m"
+    echo -e "  \033[34m$LOCAL_SOURCE\033[0m"
     echo "To:"
-    echo -e "  \033[1;36m$HOST:$DEST\033[0m"
+    echo -e "  \033[1;36m$SSH_TARGET:$DEST\033[0m"
     echo
-    read -p "Y/n: " confirm
-
-    if [[ "$confirm" =~ ^[Nn] ]]; then
-        echo "Cancelled"
-        exit 0
-    fi
-
-    # Clear confirmation output (Yeeting: + item + To: + path + empty + Y/n)
+    read -rp "Y/n: " confirm
+    [[ "$confirm" =~ ^[Nn] ]] && echo "Cancelled" && exit 0
     printf "\033[%dA\033[J" 5
 fi
 
-FOUND_ITEMS=("$SOURCE")
+# --- Transfer ---
+RSYNC_ARGS=("-az")
+[[ -n "$CONN_PORT" ]] && RSYNC_ARGS+=("--rsh" "ssh -p $CONN_PORT")
 
-# Transfer
-ORIGINAL_DIR=$(pwd)
-TEMP_DIR=""
 RSYNC_PID=""
 SUCCESS=false
 
 cleanup() {
-    if [[ -n "${RSYNC_PID:-}" ]] && kill -0 "$RSYNC_PID" 2>/dev/null; then
+    [[ -n "${RSYNC_PID:-}" ]] && kill -0 "$RSYNC_PID" 2>/dev/null && {
         kill "$RSYNC_PID" 2>/dev/null
         wait "$RSYNC_PID" 2>/dev/null
-    fi
+    }
 
-    if [[ "$COPY_MODE" == false && -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        if [[ "$SUCCESS" == false ]]; then
-            # Restore files on failure
-            mv "$TEMP_DIR"/* "$ORIGINAL_DIR/" 2>/dev/null || true
-        fi
+    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
+        [[ "$SUCCESS" == false ]] && mv "$TEMP_DIR"/* "$ORIGINAL_DIR/" 2>/dev/null || true
         rm -rf "$TEMP_DIR"
     fi
 }
-
 trap cleanup INT TERM EXIT
 
-# Move to temp dir first (so source is "gone" during transfer)
-if [[ "$COPY_MODE" == false ]]; then
+ORIGINAL_DIR=$(pwd)
+TEMP_DIR=""
+RSYNC_SOURCE="$LOCAL_SOURCE"
+
+if [[ "$REMOVE_SOURCE" == true ]]; then
     TEMP_DIR=$(mktemp -d)
-    for item in "${FOUND_ITEMS[@]}"; do
-        mv "$item" "$TEMP_DIR/"
-    done
-    # Update sources to temp locations
-    SOURCES=()
-    for item in "${FOUND_ITEMS[@]}"; do
-        SOURCES+=("$TEMP_DIR/$(basename "$item")")
-    done
-else
-    SOURCES=("${FOUND_ITEMS[@]}")
+    mv "$LOCAL_SOURCE" "$TEMP_DIR/"
+    RSYNC_SOURCE="$TEMP_DIR/$(basename "$LOCAL_SOURCE")"
 fi
 
-printf "Yeeting"
-
-rsync -az "${SOURCES[@]}" "$HOST:$DEST/" 2>/dev/null &
+rsync "${RSYNC_ARGS[@]}" "$RSYNC_SOURCE" "$SSH_TARGET:$DEST/" 2>/dev/null &
 RSYNC_PID=$!
-
-DOTS=""
-while kill -0 "$RSYNC_PID" 2>/dev/null; do
-    printf "\rYeeting%-3s" "$DOTS"
-    DOTS="${DOTS}."
-    [[ ${#DOTS} -gt 3 ]] && DOTS=""
-    sleep 0.3
-done
+spin "Yeeting" $RSYNC_PID
 wait "$RSYNC_PID"
 RSYNC_EXIT=$?
 
-if [[ $RSYNC_EXIT -ne 0 ]]; then
-    printf "\rYeet failed\n"
-    exit 1
-fi
+[[ $RSYNC_EXIT -ne 0 ]] && printf "\rYeet failed\n" && exit 1
 
 SUCCESS=true
-
-# Clean final output
 printf "\r\033[K"
-printf "Yeeted \033[34m%s\033[0m\n" "$SOURCE"
-printf " \033[1;36m→ %s:%s\033[0m\n" "$HOST" "$DEST"
+printf "Yeeted \033[34m%s\033[0m\n" "$LOCAL_SOURCE"
+printf " \033[1;36m→ %s:%s\033[0m\n" "$SSH_TARGET" "$DEST"

@@ -9,6 +9,9 @@
 
 set -euo pipefail
 
+LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+source "$LIBDIR/net.sh"
+
 PORT=8080
 ALL=false
 
@@ -31,31 +34,16 @@ EOF
   exit 0
 }
 
-get_local_ip() {
-  hostname -I 2>/dev/null | awk '{print $1}' | grep -v '^$' && return
-  ifconfig 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | head -1
-}
-
 # .13 or .13:9000 → full IP, sets PORT as side effect
 normalize_host() {
   local input="$1"
 
-  # strip port suffix
   if [[ "$input" =~ :([0-9]+)$ ]]; then
     PORT="${BASH_REMATCH[1]}"
     input="${input%:*}"
   fi
 
-  # short octet form: .13 → subnet.13
-  if [[ "$input" =~ ^\.[0-9]+$ ]]; then
-    local local_ip
-    local_ip=$(get_local_ip)
-    [[ -z "$local_ip" ]] && { echo "error: could not detect local IP" >&2; exit 1; }
-    echo "${local_ip%.*}${input}"
-    return
-  fi
-
-  echo "$input"
+  expand_local_ip "$input"
 }
 
 # ── args ──────────────────────────────────────────────────────────────────────

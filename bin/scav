@@ -13,23 +13,32 @@ FLAGS:
     -d, --dir, --folder Search directories only
     -l, --limit <num>   Limit results (default: 1)
     -<num>              Shorthand for --limit (e.g., -5)
-
-EXAMPLES:
-    scav bashrc         # Find first match for "bashrc"
-    scav -5 bashrc      # Find 5 matches
-    scav -f config      # Find files only
-    scav -d projects    # Find directories only
-    scav -fl3 test      # Combine flags: files, limit 3
+    -r, --remote <host> Search on remote host (fd or find fallback)
 EOF
 }
 
-# Parse flags (standard Unix: flags before positionals)
 TYPE_FLAG=""
+FD_TYPE_FLAG=""
 LIMIT=1
+REMOTE_HOST=""
+POSITIONALS=()
 
-while [[ $# -gt 0 && "$1" == -* ]]; do
+# Remote guard: if bootstrapped on remote, LIBDIR won't exist — skip remote logic entirely
+if [[ -n "${LIBDIR:-}" && -f "$LIBDIR/net.sh" ]]; then
+    IS_LOCAL=true
+else
+    IS_LOCAL=false
+fi
+
+while [[ $# -gt 0 ]]; do
     arg="$1"
     shift
+
+    # Positionals (not a flag)
+    if [[ "$arg" != -* ]]; then
+        POSITIONALS+=("$arg")
+        continue
+    fi
 
     # Standalone numeric shortcut: -3, -10, etc
     if [[ "$arg" =~ ^-[0-9]+$ ]]; then
@@ -40,58 +49,89 @@ while [[ $# -gt 0 && "$1" == -* ]]; do
     # Long flags
     case "$arg" in
         -h|--help) show_help; exit 0 ;;
-        --file) TYPE_FLAG="--type f"; continue ;;
-        --dir|--folder) TYPE_FLAG="--type d"; continue ;;
-        --limit)
+        -f|--file) TYPE_FLAG="--type f"; FD_TYPE_FLAG="-type f"; continue ;;
+        -d|--dir|--folder) TYPE_FLAG="--type d"; FD_TYPE_FLAG="-type d"; continue ;;
+        -l|--limit)
             if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
-                LIMIT="$1"
-                shift
+                LIMIT="$1"; shift
             else
-                echo "scav: --limit requires numeric argument" >&2
-                exit 1
+                echo "scav: --limit requires numeric argument" >&2; exit 1
             fi
-            continue
-            ;;
+            continue ;;
+        -r|--remote)
+            if [[ "$IS_LOCAL" == true ]]; then
+                REMOTE_HOST="$1"; shift
+            else
+                echo "scav: -r not available when bootstrapped remotely" >&2; exit 1
+            fi
+            continue ;;
+        -*)
+            # Combined short flags: -fn3, -dn5, etc
+            flags="${arg#-}"
+            while [[ -n "$flags" ]]; do
+                flag="${flags:0:1}"
+                flags="${flags:1}"
+                case "$flag" in
+                    h) show_help; exit 0 ;;
+                    f) TYPE_FLAG="--type f"; FD_TYPE_FLAG="-type f" ;;
+                    d) TYPE_FLAG="--type d"; FD_TYPE_FLAG="-type d" ;;
+                    r)
+                        if [[ "$IS_LOCAL" == true ]]; then
+                            REMOTE_HOST="$flags"; flags=""
+                        fi ;;
+                    l)
+                        if [[ -n "$flags" ]]; then
+                            LIMIT="$flags"; flags=""
+                        elif [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+                            LIMIT="$1"; shift
+                        else
+                            echo "scav: -l requires numeric argument" >&2; exit 1
+                        fi ;;
+                    [0-9]) LIMIT="${flag}${flags}"; flags="" ;;
+                    *) echo "scav: unknown flag: -$flag" >&2; exit 1 ;;
+                esac
+            done ;;
     esac
-
-    # Combined short flags: -fn3, -dn5, etc
-    flags="${arg#-}"
-
-    while [[ -n "$flags" ]]; do
-        flag="${flags:0:1}"
-        flags="${flags:1}"
-
-        case "$flag" in
-            h) show_help; exit 0 ;;
-            f) TYPE_FLAG="--type f" ;;
-            d) TYPE_FLAG="--type d" ;;
-            l)
-                # -l requires numeric value (attached or next arg)
-                if [[ -n "$flags" ]]; then
-                    LIMIT="$flags"
-                    flags=""
-                elif [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
-                    LIMIT="$1"
-                    shift
-                else
-                    echo "scav: -l requires numeric argument" >&2
-                    exit 1
-                fi
-                ;;
-            *)
-                echo "scav: unknown flag: -$flag" >&2
-                exit 1
-                ;;
-        esac
-    done
 done
 
-query="${1#./}"  # strip leading ./ so "scav ./foo" works like "scav foo"
+query="${POSITIONALS[0]#./}"
 
 if [[ -z "$query" ]]; then
     echo "scav: missing query pattern" >&2
     exit 1
 fi
 
+# --- Remote search ---
+if [[ -n "$REMOTE_HOST" ]]; then
+    source "$LIBDIR/net.sh"
+
+    # Normalize host
+    CONN_USER="" CONN_HOST="" CONN_PORT=""
+    local_input="$REMOTE_HOST"
+    [[ "$local_input" == *@* ]] && { CONN_USER="${local_input%%@*}"; local_input="${local_input#*@}"; }
+    if [[ "$local_input" == *:* ]]; then
+        CONN_PORT="${local_input##*:}"; CONN_HOST="${local_input%:*}"
+    else
+        CONN_HOST="$local_input"
+    fi
+    CONN_HOST=$(expand_local_ip "$CONN_HOST") || exit 1
+
+    SSH_ARGS=()
+    [[ -n "$CONN_PORT" ]] && SSH_ARGS+=("-p" "$CONN_PORT")
+    [[ -n "$CONN_USER" ]] && SSH_TARGET="$CONN_USER@$CONN_HOST" || SSH_TARGET="$CONN_HOST"
+
+    if ssh "${SSH_ARGS[@]}" "$SSH_TARGET" "command -v fd >/dev/null 2>&1"; then
+        # Bootstrap scav on remote (fd available)
+        cat "$0" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+            "bash -s -- $TYPE_FLAG -l $LIMIT '$query'" 2>/dev/null
+    else
+        # Fallback: plain find
+        ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+            "find ~ $FD_TYPE_FLAG -iname '*${query}*' 2>/dev/null | head -n $LIMIT"
+    fi
+    exit $?
+fi
+
+# --- Local search ---
 command -v fd &>/dev/null || { echo "fd not found" >&2; exit 1; }
 fd $TYPE_FLAG "$query" ~ 2>/dev/null | head -n "$LIMIT"

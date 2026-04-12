@@ -1,10 +1,26 @@
 #!/usr/bin/env bash
 
 components=("$@")
-[[ ${#components[@]} -eq 0 ]] && components=(cpu ram gpu disk)
+[[ ${#components[@]} -eq 0 ]] && components=(machine cpu ram gpu disk)
 
 for component in "${components[@]}"; do
     case "$component" in
+        machine)
+            dmi=/sys/class/dmi/id
+            sys_vendor=$(cat "$dmi/sys_vendor" 2>/dev/null)
+            product=$(cat "$dmi/product_name" 2>/dev/null)
+            product_ver=$(cat "$dmi/product_version" 2>/dev/null)
+            board_vendor=$(cat "$dmi/board_vendor" 2>/dev/null)
+            board=$(cat "$dmi/board_name" 2>/dev/null)
+
+            if [[ -n "$product" && "$product" != "To Be Filled By O.E.M." && "$product" != "None" ]]; then
+                label="${sys_vendor:+$sys_vendor }$product${product_ver:+ $product_ver}"
+                printf "Machine: %s\n" "$label"
+            fi
+            if [[ -n "$board" && "$board" != "To Be Filled By O.E.M." && "$board" != "None" ]]; then
+                printf "Board: %s%s\n" "${board_vendor:+$board_vendor }" "$board"
+            fi
+            ;;
         cpu)
             model=$(lscpu | awk -F: '/Model name/ {gsub(/^[ \t]+/, "", $2); print $2}')
             cores=$(lscpu | awk -F: '/^Core\(s\) per socket/ {gsub(/^[ \t]+/, "", $2); print $2}')
