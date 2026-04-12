@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# ssh shadow - transparent wrapper adding:
+#   --password flag   (sshpass integration)
+#   .N host shorthand (LAN subnet expansion via net.sh)
+#   kitten ssh        (better terminal integration when inside Kitty)
+
+LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
+source "$LIBDIR/net.sh"
+
+# Find the real ssh binary (skip ourselves)
+_SELF_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+_RAW_SSH=$(type -a ssh 2>/dev/null | awk '{print $NF}' | grep -vF "$_SELF_DIR/" | head -1)
+[[ -z "$_RAW_SSH" ]] && { echo "lsh: could not find system ssh" >&2; exit 1; }
+
+# Use kitten ssh only when running inside Kitty terminal
+if [[ -n "$KITTY_WINDOW_ID" ]] && command -v kitten &>/dev/null; then
+    REAL_SSH=(kitten ssh)
+else
+    REAL_SSH=("$_RAW_SSH")
+fi
+
+# Parse --password flag (can appear anywhere in args)
+PASSWORD=""
+ARGS=()
+SKIP_NEXT=false
+
+for arg in "$@"; do
+    if $SKIP_NEXT; then
+        PASSWORD="$arg"
+        SKIP_NEXT=false
+        continue
+    fi
+    case "$arg" in
+        -P|--password) SKIP_NEXT=true ;;
+        --password=*) PASSWORD="${arg#--password=}" ;;
+        --raw|--escape-hatch) exec "$_RAW_SSH" "${ARGS[@]}" ;;
+        --help|-h)
+            cat <<'EOF'
+lsh — lushrc ssh wrapper
+
+Extras:
+  --password, -P <pass>   Connect using sshpass (requires sshpass)
+  --raw, --escape-hatch   Bypass lsh, exec system ssh directly
+  .N                      LAN subnet shorthand (e.g. .17 → 192.168.1.17)
+  user@.N[:port]          user + subnet + optional port
+
+EOF
+            "$_RAW_SSH" 2>&1 || true
+            exit 0
+            ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+
+# Expand .N subnet shorthand in host argument (handles user@.N and bare .N)
+for i in "${!ARGS[@]}"; do
+    arg="${ARGS[$i]}"
+    # Only touch non-flag args that contain .N pattern
+    [[ "$arg" == -* ]] && continue
+    if [[ "$arg" =~ ^([^@]+@)?(\.[0-9]+)(:[0-9]+)?$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        host="${BASH_REMATCH[2]}"
+        port="${BASH_REMATCH[3]#:}"  # strip leading colon
+        expanded=$(expand_local_ip "$host") || exit 1
+        ARGS[$i]="${prefix}${expanded}"
+        [[ -n "$port" ]] && ARGS=("-p" "$port" "${ARGS[@]}")
+        break  # host is always the first non-flag positional
+    fi
+done
+
+if [[ -n "$PASSWORD" ]]; then
+    if ! command -v sshpass &>/dev/null; then
+        echo "ssh: --password requires sshpass (apt install sshpass)" >&2
+        exit 1
+    fi
+    exec sshpass -p "$PASSWORD" "${REAL_SSH[@]}" "${ARGS[@]}"
+fi
+
+# Set up askpass for non-interactive shells to prompt on user's terminal
+export SSH_ASKPASS="${LIBDIR}/ssh-askpass"
+export SSH_ASKPASS_REQUIRE=prefer
+
+exec "${REAL_SSH[@]}" "${ARGS[@]}"
