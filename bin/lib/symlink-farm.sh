@@ -13,7 +13,22 @@ cleanup_broken_links() {
     done
 }
 
+cleanup_empty_home_symlinks() {
+    for link in "$HOME"/*/; do
+        [ -L "${link%/}" ] || continue
+        if [[ "$(basename "${link%/}")" == "wormhole" ]]; then
+            [ -e "${link%/}" ] || rm "${link%/}"
+            continue
+        fi
+        local target
+        target=$(readlink -f "${link%/}")
+        [ -d "$target" ] || continue
+        [ -z "$(ls -A "$target" 2>/dev/null)" ] && rm "${link%/}"
+    done
+}
+
 cleanup_broken_links
+cleanup_empty_home_symlinks
 
 #--[UTILITIES]----------------------------------
 

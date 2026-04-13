@@ -118,7 +118,7 @@ trap cleanup INT TERM EXIT
 
 ORIGINAL_DIR=$(pwd)
 TEMP_DIR=""
-RSYNC_SOURCE="$LOCAL_SOURCE"
+RSYNC_SOURCE="${LOCAL_SOURCE%/}"
 
 if [[ "$REMOVE_SOURCE" == true ]]; then
     TEMP_DIR=$(mktemp -d)
@@ -126,11 +126,13 @@ if [[ "$REMOVE_SOURCE" == true ]]; then
     RSYNC_SOURCE="$TEMP_DIR/$(basename "$LOCAL_SOURCE")"
 fi
 
-rsync "${RSYNC_ARGS[@]}" "$RSYNC_SOURCE" "$SSH_TARGET:$DEST/" 2>/dev/null &
-RSYNC_PID=$!
-spin "Yeeting" $RSYNC_PID
-wait "$RSYNC_PID"
+rsync "${RSYNC_ARGS[@]}" --info=progress2 --no-inc-recursive "$RSYNC_SOURCE" "$SSH_TARGET:$DEST/"
 RSYNC_EXIT=$?
+# rsync "${RSYNC_ARGS[@]}" "$RSYNC_SOURCE" "$SSH_TARGET:$DEST/" 2>/dev/null &
+# RSYNC_PID=$!
+# spin "Yeeting" $RSYNC_PID
+# wait "$RSYNC_PID"
+# RSYNC_EXIT=$?
 
 [[ $RSYNC_EXIT -ne 0 ]] && printf "\rYeet failed\n" && exit 1
 

@@ -13,11 +13,13 @@ _RAW_SSH=$(type -a ssh 2>/dev/null | awk '{print $NF}' | grep -vF "$_SELF_DIR/" 
 [[ -z "$_RAW_SSH" ]] && { echo "lsh: could not find system ssh" >&2; exit 1; }
 
 # Use kitten ssh only when running inside Kitty terminal
-if [[ -n "$KITTY_WINDOW_ID" ]] && command -v kitten &>/dev/null; then
-    REAL_SSH=(kitten ssh)
-else
-    REAL_SSH=("$_RAW_SSH")
-fi
+# Disabled: kitten ssh hangs the terminal
+# if [[ -n "$KITTY_WINDOW_ID" ]] && command -v kitten &>/dev/null; then
+#     REAL_SSH=(kitten ssh)
+# else
+#     REAL_SSH=("$_RAW_SSH")
+# fi
+REAL_SSH=("$_RAW_SSH")
 
 # Parse --password flag (can appear anywhere in args)
 PASSWORD=""
@@ -76,8 +78,10 @@ if [[ -n "$PASSWORD" ]]; then
     exec sshpass -p "$PASSWORD" "${REAL_SSH[@]}" "${ARGS[@]}"
 fi
 
-# Set up askpass for non-interactive shells to prompt on user's terminal
-export SSH_ASKPASS="${LIBDIR}/ssh-askpass"
-export SSH_ASKPASS_REQUIRE=prefer
+# Set up askpass only for non-interactive shells (where SSH can't prompt directly)
+if [[ ! -t 0 ]]; then
+    export SSH_ASKPASS="${LIBDIR}/ssh-askpass"
+    export SSH_ASKPASS_REQUIRE=prefer
+fi
 
 exec "${REAL_SSH[@]}" "${ARGS[@]}"
