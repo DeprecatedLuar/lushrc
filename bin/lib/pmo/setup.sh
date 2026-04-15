@@ -148,7 +148,6 @@ esac
 # Trust LAN interface (same as desktop distro home zone default)
 echo "Trusting LAN..."
 if command -v nft >/dev/null 2>&1; then
-    doas nft add rule inet filter input iifname "wlan*" accept comment "trust LAN" 2>/dev/null || true
     doas tee /etc/nftables.d/60_pmo.nft > /dev/null << 'EOF'
 # pmo: trust LAN (wlan* is home network)
 table inet filter {
@@ -157,6 +156,7 @@ table inet filter {
     }
 }
 EOF
+    doas nft -f /etc/nftables.nft
 fi
 
 # Disable WiFi power save globally (driver bugs can cause TX path to silently die)
