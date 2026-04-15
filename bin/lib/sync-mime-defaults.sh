@@ -39,6 +39,7 @@ find_desktop_file() {
 
 IMAGE_VIEWER_DESKTOP=$(find_desktop_file "$IMAGE_VIEWER")
 MEDIA_PLAYER_DESKTOP=$(find_desktop_file "$MEDIA_PLAYER")
+AUDIO_PLAYER_DESKTOP=$(find_desktop_file "$AUDIO_PLAYER")
 BROWSER_DESKTOP=$(find_desktop_file "$BROWSER")
 
 #--[UPDATE MIME ASSOCIATIONS]---------------------
@@ -70,12 +71,12 @@ declare -A mime_map=(
     ["video/mpeg"]="$MEDIA_PLAYER_DESKTOP"
 
     # Audio (common formats)
-    ["audio/mpeg"]="$MEDIA_PLAYER_DESKTOP"
-    ["audio/mp3"]="$MEDIA_PLAYER_DESKTOP"
-    ["audio/ogg"]="$MEDIA_PLAYER_DESKTOP"
-    ["audio/flac"]="$MEDIA_PLAYER_DESKTOP"
-    ["audio/wav"]="$MEDIA_PLAYER_DESKTOP"
-    ["audio/x-wav"]="$MEDIA_PLAYER_DESKTOP"
+    ["audio/mpeg"]="$AUDIO_PLAYER_DESKTOP"
+    ["audio/mp3"]="$AUDIO_PLAYER_DESKTOP"
+    ["audio/ogg"]="$AUDIO_PLAYER_DESKTOP"
+    ["audio/flac"]="$AUDIO_PLAYER_DESKTOP"
+    ["audio/wav"]="$AUDIO_PLAYER_DESKTOP"
+    ["audio/x-wav"]="$AUDIO_PLAYER_DESKTOP"
 
     # Web
     ["text/html"]="$BROWSER_DESKTOP"

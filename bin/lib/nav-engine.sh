@@ -78,8 +78,9 @@ expand_index() {
         lb/*)  echo "$HOME/.local/bin/${1#lb/}" ;;
         d/*)   echo "$HOME/Downloads/${1#d/}" ;;
         doc/*) echo "$DOCUMENTS/${1#doc/}" ;;
-        pic/*) echo "${XDG_PICTURES_DIR:-$HOME/Pictures}/${1#pic/}" ;;
-        vid/*) echo "${XDG_VIDEOS_DIR:-$HOME/Videos}/${1#vid/}" ;;
+        med/*) echo "${MEDIA:-$HOME/Media}/${1#med/}" ;;
+        pic/*) echo "${MEDIA:-$HOME/Media}/${1#pic/}" ;;
+        vid/*) echo "${MEDIA:-$HOME/Media}/${1#vid/}" ;;
         l/*)   echo "$HOME/.local/${1#l/}" ;;
         etc/*) echo "/etc/${1#etc/}" ;;
         w)     echo "$WORKSPACE" ;;
@@ -90,8 +91,9 @@ expand_index() {
         lb)    echo "$HOME/.local/bin" ;;
         d)     echo "$HOME/Downloads" ;;
         doc)   echo "$DOCUMENTS" ;;
-        pic)   echo "${XDG_PICTURES_DIR:-$HOME/Pictures}" ;;
-        vid)   echo "${XDG_VIDEOS_DIR:-$HOME/Videos}" ;;
+        med)   echo "${MEDIA:-$HOME/Media}" ;;
+        pic)   echo "${MEDIA:-$HOME/Media}" ;;
+        vid)   echo "${MEDIA:-$HOME/Media}" ;;
         l)     echo "$HOME/.local" ;;
         etc)   echo "/etc" ;;
         *)     echo "$1" ;;

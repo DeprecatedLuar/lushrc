@@ -18,11 +18,10 @@ mkdir -p "$HOME/bin"
 mkdir -p "$HOME/bin/lib"
 mkdir -p "$HOME/bin/sys"
 
-#--[MEDIA SUBDIRECTORIES]-----------------------
-
-mkdir -p "$AUDIO"
-mkdir -p "$PICTURES"
-mkdir -p "$VIDEOS"
+mkdir -p "$MEDIA/screenshots"
+mkdir -p "$PICTURES_GALLERY"
+mkdir -p "$VIDEOS_GALLERY"
+mkdir -p "$AUDIO_GALLERY"
 
 #--[WORKSPACE STRUCTURE]------------------------
 

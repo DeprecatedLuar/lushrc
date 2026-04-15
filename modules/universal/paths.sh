@@ -25,17 +25,17 @@ export GITHUB_USER="DeprecatedLuar"
 # Home-level standard directories
 export BACKUP="$HOME/Backup"
 export MEDIA="$HOME/Media"
+export MEDIA_GALLERY="$MEDIA/gallery"
+export PICTURES_GALLERY="$MEDIA_GALLERY/pictures"
+export VIDEOS_GALLERY="$MEDIA_GALLERY/videos"
+export AUDIO_GALLERY="$MEDIA_GALLERY/audio"
+export WALLPAPERS_GALLERY="$MEDIA_GALLERY/wallpapers"
 export DOCUMENTS="$HOME/Documents"
 export GAMES="$HOME/Games"
 
 # Downloads staging (ephemeral with rotation)
 export DOWNLOADS_STAGE="${XDG_CACHE_HOME:-$HOME/.cache}/downloads"
 export DOWNLOADS="$HOME/Downloads"
-
-# Media subdirectories
-export AUDIO="$MEDIA/Audio"
-export PICTURES="$MEDIA/Pictures"
-export VIDEOS="$MEDIA/Videos"
 
 #--------------------- WORKSPACE VARS ----------------------
 

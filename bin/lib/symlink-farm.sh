@@ -114,9 +114,80 @@ ln -sf "$BASHRC/modules/universal/xdg.sh" "$HOME/.config/user-dirs.dirs"
 
 link_contents "$HOME/.nix-profile/share/applications" "$HOME/.local/share/applications"
 
-#--[WALLPAPERS]----------------------------------
+#--[MEDIA GALLERY]-------------------------------
 
-for subdir in "$XDG_PICTURES_DIR/wallpapers"/*/; do
-    link_contents "$subdir" "$XDG_PICTURES_DIR/wallpapers"
-done
+sync_media_gallery() {
+    [ -d "$MEDIA" ] || return 0
+
+    # Clear existing symlinks (real files untouched)
+    find "$PICTURES_GALLERY" "$VIDEOS_GALLERY" "$AUDIO_GALLERY" "$WALLPAPERS_GALLERY" \
+        -maxdepth 1 -type l -delete 2>/dev/null || true
+
+    while IFS= read -r -d '' file; do
+        local rel="${file#$MEDIA/}"
+        local name="${rel//\//-}"
+        local ext="${file##*.}"
+
+        case "${ext,,}" in
+            png|jpg|jpeg|gif|webp|svg|tiff|tif|bmp|kra|xcf|psd)
+                ln -sf "$file" "$PICTURES_GALLERY/$name" ;;
+            mp4|mkv|webm|mov|avi|mpeg|mpg|flv|wmv)
+                ln -sf "$file" "$VIDEOS_GALLERY/$name" ;;
+            mp3|flac|wav|ogg|opus|aac|m4a|wma)
+                ln -sf "$file" "$AUDIO_GALLERY/$name" ;;
+        esac
+    done < <(find "$MEDIA" \
+        -not -path "$MEDIA/gallery/*" \
+        -not -path "$MEDIA/screenshots/*" \
+        -not -path "$MEDIA/wallpapers/*" \
+        -not -path "$MEDIA/wpp/*" \
+        -type f -print0 2>/dev/null)
+}
+
+sync_media_gallery
+
+#--[WALLPAPERS GALLERY]--------------------------
+
+sync_wallpapers_gallery() {
+    local wpp_dir=""
+    [ -d "$MEDIA/wallpapers" ] && wpp_dir="$MEDIA/wallpapers"
+    [ -d "$MEDIA/wpp" ] && wpp_dir="$MEDIA/wpp"
+    [ -n "$wpp_dir" ] || return 0
+
+    mkdir -p "$WALLPAPERS_GALLERY"
+
+    while IFS= read -r -d '' file; do
+        local rel="${file#$wpp_dir/}"
+        local name="${rel//\//-}"
+        ln -sf "$file" "$WALLPAPERS_GALLERY/$name"
+    done < <(find "$wpp_dir" -type f -print0 2>/dev/null)
+}
+
+sync_wallpapers_gallery
+
+#--[WORKSPACE ↔ MEDIA CROSSLINKS]---------------
+
+sync_workspace_media() {
+    [ -d "$WORKSPACE" ] || return 0
+    [ -d "$MEDIA" ] || return 0
+
+    for ws_dir in "$WORKSPACE"/*/ "$WORKSPACE"/*/*/; do
+        [ -d "$ws_dir" ] || continue
+        local rel="${ws_dir%/}"; rel="${rel#$WORKSPACE/}"
+        local media_dir="$MEDIA/$rel"
+        [ -d "$media_dir" ] || continue
+
+        # Workspace side: media/ or local-media/ → Media/project
+        local ws_link="${ws_dir%/}/media"
+        if [ -e "$ws_link" ] && [ ! -L "$ws_link" ]; then
+            ws_link="${ws_dir%/}/local-media"
+        fi
+        ln -sfn "$media_dir" "$ws_link"
+
+        # Media side: workspace/ → Workspace/project
+        ln -sfn "${ws_dir%/}" "$media_dir/workspace"
+    done
+}
+
+sync_workspace_media
 

@@ -10,6 +10,7 @@ export BROWSER="firefox"
 
 export DATA_VIEWER="visidata"
 export MEDIA_PLAYER="celluloid"
+export AUDIO_PLAYER="mpv"
 export IMAGE_VIEWER="swayimg"
 
 export FILEMANAGER="pcmanfm-qt"

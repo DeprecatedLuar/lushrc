@@ -43,7 +43,9 @@ modules/universal/source.sh
 - `PROJECTS=$WORKSPACE/dev` - Your active development projects
 - `DOCKER_DIR=$WORKSPACE/docker` - Docker configurations
 - `SHARED=$WORKSPACE/shared` - Shared workspace resources
-- XDG-compliant directories in `xdg.sh`
+- `MEDIA=$HOME/Media` - Flat media hub; subfolders are project/tool-named (e.g. `rec/`, `krita/`)
+- `MEDIA_GALLERY=$MEDIA/gallery` - Auto-populated symlink gallery (`pictures/`, `videos/`, `audio/`)
+- XDG dirs (`XDG_PICTURES_DIR`, `XDG_VIDEOS_DIR`, `XDG_MUSIC_DIR`) all resolve to `$MEDIA`
 
 ### Self-Healing Symlink System
 
@@ -69,10 +71,11 @@ Universal path resolver powering `tx`, `pw`, `yoink`, `wormhole`, and enhanced `
 ```
 w/  → $WORKSPACE/          l/   → $HOME/.local/
 t/  → $TOOLS/              lb/  → $HOME/.local/bin/
-c/  → $HOME/.config/       pic/ → $XDG_PICTURES_DIR/
-b/  → $HOME/bin/           vid/ → $XDG_VIDEOS_DIR/
-sb/ → /usr/local/bin/      d/   → $HOME/Downloads/
-doc/ → $DOCUMENTS/         etc/ → /etc/
+c/  → $HOME/.config/       med/ → $MEDIA/
+b/  → $HOME/bin/           pic/ → $MEDIA/
+sb/ → /usr/local/bin/      vid/ → $MEDIA/
+doc/ → $DOCUMENTS/         d/   → $HOME/Downloads/
+etc/ → /etc/
 ```
 
 **Resolution Order**:
@@ -177,14 +180,14 @@ Flags: `--rm` (delete source after transfer), `-y`/`--yes` (skip confirm), `--lo
 
 **rec** — unified screen/audio recorder (Wayland via `wf-recorder`, audio via `ffmpeg`):
 ```bash
-rec screen              # screen + desktop audio → $XDG_VIDEOS_DIR
+rec screen              # screen + desktop audio → $MEDIA/rec/
 rec screen --mic        # screen + microphone
 rec screen --mute       # screen only
 rec audio / rec mic     # audio-only recording
 rec stop / rec delete   # save or discard
 rec deps                # check dependencies
 ```
-State persisted to `/tmp/rec.state` so stop/delete work across shells.
+State persisted to `/tmp/rec.state` so stop/delete work across shells. Audio format auto-detected from ffmpeg capabilities (pulse vs pipewire).
 
 **tranz** — universal file format converter (ffmpeg / ImageMagick / whisper-cpp / markitdown / libreoffice):
 ```bash
@@ -348,7 +351,10 @@ $LIBDIR/reload.sh
     │   ├─ Link: $TOOLS/bin/* → ~/bin/
     │   ├─ Link: $BASHRC/bin/lib/* → ~/bin/lib/
     │   ├─ Link: UV tools → ~/.local/bin/
-    │   └─ Link: Nix apps, fonts, wallpapers
+    │   ├─ Link: Nix apps, fonts, wallpapers
+    │   ├─ sync_media_gallery: symlinks all media files into $MEDIA_GALLERY/{pictures,videos,audio}
+    │   └─ sync_workspace_media: globs $WORKSPACE/*/ and $WORKSPACE/*/*/ — for any dir whose
+    │       relative path also exists under $MEDIA, creates media/ → $MEDIA/rel and workspace/ → $WORKSPACE/rel
     └─ Optional: sync_system_links (if --system/-s flag, requires sudo)
 ```
 

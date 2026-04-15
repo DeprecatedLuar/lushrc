@@ -2,7 +2,7 @@
 # rec - unified recording: screen, desktop audio, mic
 
 STATE="/tmp/rec.state"
-OUT_DIR="${XDG_VIDEOS_DIR:-$HOME/Videos}"
+OUT_DIR="${MEDIA:-$HOME/Media}/rec"
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 
 _die()     { echo "$*" >&2; exit 1; }
@@ -29,7 +29,7 @@ _wait_exit() {
 }
 
 _audio_fmt() {
-    command -v pactl &>/dev/null && echo pulse || echo pipewire
+    ffmpeg -hide_banner -devices 2>/dev/null | grep -q '\bpipewire\b' && echo pipewire || echo pulse
 }
 
 _get_monitor() {
@@ -118,10 +118,10 @@ cmd_audio() {
     local monitor; monitor=$(_get_monitor)
     [[ -n "$monitor" ]] || _die "no audio monitor found"
 
-    local file="$OUT_DIR/rec_${TIMESTAMP}.flac"
+    local file="$OUT_DIR/rec_${TIMESTAMP}.opus"
     mkdir -p "$OUT_DIR"
 
-    ffmpeg -loglevel error -f "$(_audio_fmt)" -i "$monitor" -c:a flac "$file" &>/dev/null &
+    ffmpeg -loglevel error -f "$(_audio_fmt)" -i "$monitor" -c:a libopus -b:a 64k "$file" &>/dev/null &
     _save_state "$!" "$file" "audio"
     _log "recording desktop audio → $file"
 }
@@ -130,11 +130,11 @@ cmd_mic() {
     _load_state && _alive && _die "already recording [$MODE]"
     _need ffmpeg
 
-    local file="$OUT_DIR/rec_${TIMESTAMP}.flac"
+    local file="$OUT_DIR/rec_${TIMESTAMP}.opus"
     mkdir -p "$OUT_DIR"
 
     local mic; mic=$(_get_mic)
-    ffmpeg -loglevel error -f "$(_audio_fmt)" -i "${mic:-default}" -c:a flac "$file" &>/dev/null &
+    ffmpeg -loglevel error -f "$(_audio_fmt)" -i "${mic:-default}" -c:a libopus -b:a 64k "$file" &>/dev/null &
     _save_state "$!" "$file" "mic"
     _log "recording mic → $file"
 }
