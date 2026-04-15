@@ -3,9 +3,15 @@
 
 PMO_LIB="${BASHRC:-$HOME/.config/lushrc}/bin/lib/pmo"
 FB_BLANK="/sys/class/graphics/fb0/blank"
-BL_PATH="/sys/class/backlight/backlight"
-CHARGE_LIMIT="/sys/class/power_supply/qcom-smbchg-usb/input_current_limit"
+BL_DEV=$(ls /sys/class/backlight/ 2>/dev/null | head -1)
+BL_PATH="/sys/class/backlight/${BL_DEV:-backlight}"
+CHARGE_LIMIT=$(ls /sys/class/power_supply/*/input_current_limit 2>/dev/null | head -1)
 STATE_FILE="/tmp/pmo-state"
+BL_SAVE="/tmp/pmo-brightness"
+
+wifi_iface() {
+    nmcli -t -f device,type device status 2>/dev/null | awk -F: '/wifi/{print $1; exit}'
+}
 
 set_brightness() {
     max=$(cat "$BL_PATH/max_brightness")
@@ -36,8 +42,8 @@ stop_target() {
 }
 
 case "$1" in
-    wake)   echo 0 > "$FB_BLANK"; echo awake > "$STATE_FILE" ;;
-    sleep)  echo 1 > "$FB_BLANK"; echo sleeping > "$STATE_FILE" ;;
+    wake)   echo 0 > "$FB_BLANK"; cat "$BL_SAVE" 2>/dev/null > "$BL_PATH/brightness" || set_brightness 100; echo awake > "$STATE_FILE" ;;
+    sleep)  cat "$BL_PATH/brightness" > "$BL_SAVE"; echo 1 > "$FB_BLANK"; set_brightness 0; echo sleeping > "$STATE_FILE" ;;
     wake-switch) [ "$(cat "$STATE_FILE" 2>/dev/null)" = "awake" ] && pmo sleep || pmo wake ;;
     status) cat "$STATE_FILE" 2>/dev/null || echo "unknown" ;;
     kb|keyboard)       stop_target kb; start_target kb ;;
@@ -47,8 +53,70 @@ case "$1" in
     stop)        stop_target "$2" ;;
     setup)       "$PMO_LIB/setup.sh" ;;
     size)        setfont "ter-1${2}b" || echo "Valid sizes: 12 14 16 18 20 22 24 28 32" ;;
-    bl|backlight|lux) set_brightness "$2" ;;
-    charge-speed) echo $(($2 * 1000)) > "$CHARGE_LIMIT" && echo "$(cat "$CHARGE_LIMIT")µA" ;;
+    br|bl|brightness) set_brightness "$2" ;;
+    charge-speed)
+        [ -z "$CHARGE_LIMIT" ] && echo "charge control not available on this device" && exit 1
+        case "$2" in
+            low|slow)   mA=500 ;;
+            medium|med) mA=1000 ;;
+            fast)       mA=2000 ;;
+            *)          mA=$2 ;;
+        esac
+        echo $((mA * 1000)) > "$CHARGE_LIMIT" && echo "charge: $(cat "$CHARGE_LIMIT")µA (${mA}mA)" ;;
+    wifi)
+        iface=$(wifi_iface)
+        [ -z "$iface" ] && echo "no wifi interface found" && exit 1
+        case "$2" in
+            restart)  nmcli device disconnect "$iface"; nmcli device connect "$iface" ;;
+            connect)
+                if [ -n "$3" ]; then
+                    nmcli --ask device wifi connect "$3"
+                else
+                    nmcli device connect "$iface"
+                fi ;;
+            ui)       nmtui ;;
+            "")
+                ssid=$(nmcli -t -f active,ssid device wifi list 2>/dev/null | awk -F: '/^yes/{print $2}')
+                signal=$(nmcli -t -f active,signal device wifi list 2>/dev/null | awk -F: '/^yes/{print $2}')
+                if [ -n "$ssid" ]; then
+                    echo "connected: $ssid (${signal}%)"
+                else
+                    echo "not connected"
+                fi ;;
+            *) echo "Usage: pmo wifi [restart|connect [ssid]|ui]" && exit 1 ;;
+        esac ;;
     -e|edit) ${EDITOR:-vi} "$HOME/.config/triggerhappy/buttons.conf" ;;
-    *)           echo "Usage: pmo {wake|sleep|wake-switch|status|kb|btn|start|stop|setup|size|bl|-e}" && exit 1 ;;
+    *)
+        cat <<'EOF'
+pmo — postmarketOS power management
+
+Display
+  wake              unblank screen
+  sleep             blank screen
+  wake-switch       toggle blank/unblank
+  status            show current state (awake/sleeping)
+  br <n>            set brightness (0-100, or +10/-10)
+
+Keyboard
+  kb / keyboard     restart on-screen keyboard (buffyboard)
+  kb-switch         toggle on-screen keyboard on/off
+
+Buttons
+  btn / buttons     restart hardware button daemon (triggerhappy)
+  start <kb|btn>    start target
+  stop  <kb|btn>    stop target
+
+Other
+  size <n>          set TTY font size (12 14 16 18 20 22 24 28 32)
+  charge-speed <n>  set charge current (low=500mA, med=1000mA, fast=2000mA, or raw mA)
+  wifi              show current connection
+  wifi restart      force reconnect wlan0
+  wifi connect      connect to best saved network in range
+  wifi connect <n>  connect to specific network (prompts for password)
+  wifi ui           open nmtui
+  setup             run setup script
+  -e                edit triggerhappy button config
+EOF
+        exit 1 ;;
+
 esac

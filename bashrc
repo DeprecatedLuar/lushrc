@@ -183,3 +183,5 @@ if [[ $- == *i* ]]; then
 fi
 
 alias feh='feh --action "wl-copy --type $(file --mime-type -b %F) < %F"'
+
+. "$HOME/.local/share/../bin/env"

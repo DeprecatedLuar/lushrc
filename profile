@@ -36,3 +36,5 @@ fi
 export QT_QPA_PLATFORMTHEME=qt5ct
 
 if [ -e /home/luar/.nix-profile/etc/profile.d/nix.sh ]; then . /home/luar/.nix-profile/etc/profile.d/nix.sh; fi # added by Nix installer
+
+. "$HOME/.local/share/../bin/env"
