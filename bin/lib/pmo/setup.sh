@@ -145,17 +145,15 @@ EOF
         ;;
 esac
 
-# Open LAN service ports (serve/evres file sharing)
-echo "Opening LAN ports..."
+# Trust LAN interface (same as desktop distro home zone default)
+echo "Trusting LAN..."
 if command -v nft >/dev/null 2>&1; then
-    doas nft add rule inet filter input tcp dport 8080 accept 2>/dev/null || true
-    NFT_CONF="/etc/nftables.d/pmo-lan.conf"
-    doas mkdir -p /etc/nftables.d
-    doas tee "$NFT_CONF" > /dev/null << 'EOF'
-# pmo: LAN service ports
+    doas nft add rule inet filter input iifname "wlan*" accept comment "trust LAN" 2>/dev/null || true
+    doas tee /etc/nftables.d/60_pmo.nft > /dev/null << 'EOF'
+# pmo: trust LAN (wlan* is home network)
 table inet filter {
     chain input {
-        tcp dport 8080 accept
+        iifname "wlan*" accept comment "trust LAN"
     }
 }
 EOF
