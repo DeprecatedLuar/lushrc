@@ -145,6 +145,22 @@ EOF
         ;;
 esac
 
+# Open LAN service ports (serve/evres file sharing)
+echo "Opening LAN ports..."
+if command -v nft >/dev/null 2>&1; then
+    doas nft add rule inet filter input tcp dport 8080 accept 2>/dev/null || true
+    NFT_CONF="/etc/nftables.d/pmo-lan.conf"
+    doas mkdir -p /etc/nftables.d
+    doas tee "$NFT_CONF" > /dev/null << 'EOF'
+# pmo: LAN service ports
+table inet filter {
+    chain input {
+        tcp dport 8080 accept
+    }
+}
+EOF
+fi
+
 # Disable WiFi power save globally (driver bugs can cause TX path to silently die)
 NM_WIFI_CONF="/etc/NetworkManager/conf.d/wifi-powersave.conf"
 if [ ! -f "$NM_WIFI_CONF" ]; then
