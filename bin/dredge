@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 LIBDIR="${LIBDIR:-$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib}"
-source "$LIBDIR/gh-install.sh"
+source "$LIBDIR/shared/gh-install.sh"
 gh_install "dredge" "DeprecatedLuar/dredge" "$@"

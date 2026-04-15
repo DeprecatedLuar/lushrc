@@ -2,7 +2,7 @@
 
 #--[ENSURE DIRECTORY STRUCTURE]-----------------
 
-source "$LIBDIR/ensure-dirs.sh"
+source "$LIBDIR/reload/ensure-dirs.sh"
 
 #--[MAKE SCRIPTS EXECUTABLE]-------------------
 
@@ -16,11 +16,11 @@ chmod +x $HOME/bin/sys/* 2>/dev/null || true
 
 #--[SYNC SYMLINKS]-----------------------------
 
-source "$LIBDIR/symlink-farm.sh"
+source "$LIBDIR/reload/symlink-farm.sh"
 
 #--[SYNC MIME DEFAULTS]------------------------
 
-source "$LIBDIR/sync-mime-defaults.sh"
+source "$LIBDIR/reload/sync-mime-defaults.sh"
 ln -sf "$BASHRC/modules/defaults/mimeapps.list" "$HOME/.config/mimeapps.list"
 
 #--[SYSTEM-LEVEL SYNC]-------------------------

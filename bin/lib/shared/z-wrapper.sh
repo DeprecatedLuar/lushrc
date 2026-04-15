@@ -34,7 +34,7 @@ if [[ "$1" == "-" ]]; then
 fi
 
 # Resolve path using nav-engine
-target="$($LIBDIR/nav-engine.sh "${flags[@]}" "$1" 2>&1)"
+target="$($LIBDIR/shared/nav-engine.sh "${flags[@]}" "$1" 2>&1)"
 
 # Check if nav-engine succeeded
 if [[ $? -eq 0 ]]; then

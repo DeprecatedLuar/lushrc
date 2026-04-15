@@ -21,7 +21,7 @@ dir="${path%/*}"
 file="${path##*/}"
 
 # Resolve directory through nav-engine
-resolved_dir=$("$LIBDIR/nav-engine.sh" "$dir")
+resolved_dir=$("$LIBDIR/shared/nav-engine.sh" "$dir")
 
 if [[ $? -ne 0 || -z "$resolved_dir" ]]; then
   echo "edit: failed to resolve path '$dir'"

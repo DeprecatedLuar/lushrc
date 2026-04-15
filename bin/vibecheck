@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-LIB_DIR="$(dirname "$0")/lib"
+LIB_DIR="$(dirname "$0")/lib/vibecheck"
 
 case "${1:-}" in
     tray)

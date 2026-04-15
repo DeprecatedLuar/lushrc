@@ -10,7 +10,7 @@
 set -euo pipefail
 
 LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
-source "$LIBDIR/net.sh"
+source "$LIBDIR/shared/net.sh"
 
 PORT=8080
 ALL=false

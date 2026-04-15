@@ -4,8 +4,8 @@
 set -euo pipefail
 
 LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
-source "$LIBDIR/net.sh"
-source "$LIBDIR/spinner.sh"
+source "$LIBDIR/shared/net.sh"
+source "$LIBDIR/shared/spinner.sh"
 
 REMOVE_SOURCE=false
 SKIP_CONFIRM=false
@@ -68,7 +68,7 @@ SSH_ARGS=()
 [[ -n "$CONN_USER" ]] && SSH_TARGET="$CONN_USER@$CONN_HOST" || SSH_TARGET="$CONN_HOST"
 
 # --- Resolve remote path via nav-engine ---
-REMOTE_PATH=$(cat "$LIBDIR/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+REMOTE_PATH=$(cat "$LIBDIR/shared/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
     "TERM=dumb bash -s -- $NAV_FLAGS -f '$REMOTE_PATH_QUERY'" 2>/dev/null) || {
     echo "yoink: failed to resolve '$REMOTE_PATH_QUERY' on $SSH_TARGET" >&2
     exit 1

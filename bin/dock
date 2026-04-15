@@ -2,8 +2,8 @@
 
 DOCK_DIR="/tmp/dock"
 LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
-source "$LIBDIR/net.sh"
-source "$LIBDIR/spinner.sh"
+source "$LIBDIR/shared/net.sh"
+source "$LIBDIR/shared/spinner.sh"
 
 # --- Normalize SSH connection args ---
 # Accepts: [-p PORT] [-l USER] [user@]host[:port]

@@ -20,7 +20,7 @@ case "${1:-help}" in
             ln -sf "$bin" "$SYS_BIN/$prog"
             echo "$prog -> $SYS_BIN/"
         done
-        "$LIBDIR/reload.sh" -s
+        "$LIBDIR/reload/reload.sh" -s
         ;;
 
     update)
@@ -37,7 +37,7 @@ case "${1:-help}" in
         fi
 
         git pull
-        "$LIBDIR/reload.sh"
+        "$LIBDIR/reload/reload.sh"
         ;;
 
     status)

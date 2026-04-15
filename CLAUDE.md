@@ -32,7 +32,7 @@ modules/universal/source.sh
   ├→ defaults/defaults.sh (EDITOR, BROWSER, TERMINAL selections)
   ├→ aliases.sh (shell shortcuts)
   ├→ local.sh (user-specific, git-ignored)
-  └→ zoxide init + completions
+  └→ zoxide init + z() override via bin/lib/shared/z-wrapper.sh
 ```
 
 **Key Environment Variables**:
@@ -41,90 +41,61 @@ modules/universal/source.sh
 - `WORKSPACE=$HOME/Workspace` - Root workspace directory
 - `TOOLS=$WORKSPACE/tools` - Cloned repos and external tools
 - `PROJECTS=$WORKSPACE/dev` - Your active development projects
-- `DOCKER_DIR=$WORKSPACE/docker` - Docker configurations
-- `SHARED=$WORKSPACE/shared` - Shared workspace resources
-- `MEDIA=$HOME/Media` - Flat media hub; subfolders are project/tool-named (e.g. `rec/`, `krita/`)
+- `MEDIA=$HOME/Media` - Flat media hub; subfolders are project/tool-named
 - `MEDIA_GALLERY=$MEDIA/gallery` - Auto-populated symlink gallery (`pictures/`, `videos/`, `audio/`)
 - XDG dirs (`XDG_PICTURES_DIR`, `XDG_VIDEOS_DIR`, `XDG_MUSIC_DIR`) all resolve to `$MEDIA`
 
+### bin/lib/ Structure
+
+Libraries are organized by ownership, not by type:
+
+```
+bin/lib/
+  shared/     — libraries used by multiple binaries (nav-engine, net, spinner, z-wrapper, gh-install)
+  reload/     — shell reload machinery (reload.sh, symlink-farm.sh, ensure-dirs.sh, sync-mime-defaults.sh, downloads-rotation.sh)
+  vibecheck/  — helpers owned exclusively by vibecheck
+  sat/        — helpers owned exclusively by sat
+  serve/      — assets owned exclusively by serve (share.html)
+  pmo/        — helpers owned exclusively by pmo
+  input/      — UI assets for input prompts (rofi .rasi + .sh)
+```
+
+**Rule**: if a file is used by more than one binary → `shared/`. If it belongs to exactly one → its own subdir.
+
 ### Self-Healing Symlink System
 
-On every bashrc reload (or explicit `reload` command):
-1. `symlink-farm.sh` runs automatically
-2. Removes all broken symlinks from ~/bin, ~/.local/bin, etc.
-3. Recreates symlinks from:
-   - `$BASHRC/bin/*` → `~/bin/`
-   - `$TOOLS/bin/*` → `~/bin/`
-   - UV tools, systemd configs, fonts, applications
-4. Makes all scripts executable
-5. Refreshes command hash
+On every `reload`:
+1. `bin/lib/reload/symlink-farm.sh` removes broken symlinks from `~/bin`, `~/.local/bin`, etc.
+2. Recreates symlinks: `$BASHRC/bin/*` → `~/bin/`, `$TOOLS/bin/*` → `~/bin/`
+3. `$BASHRC/bin` is on `$PATH` directly — no symlinks needed for bin/ scripts themselves
+4. Syncs UV tools, systemd configs, fonts, applications, media gallery
 
-**Idempotent**: Can run multiple times safely.
+**Idempotent**: safe to run multiple times.
 
-### Navigation Engine (nav-engine.sh)
+### Navigation Engine
 
-Universal path resolver powering `tx`, `pw`, `yoink`, `wormhole`, and enhanced `z`:
+`bin/lib/shared/nav-engine.sh` — universal path resolver powering `tx`, `pw`, `yoink`, `yeet`, `wormhole`, `z`, `peek`, `edit`, `scav`.
 
 **Flags**: `-f`/`--file` enables file resolution (default is directory-only), `--log` enables debug output.
 
 **Nav Index Shorthand**:
 ```
-w/  → $WORKSPACE/          l/   → $HOME/.local/
-t/  → $TOOLS/              lb/  → $HOME/.local/bin/
-c/  → $HOME/.config/       med/ → $MEDIA/
-b/  → $HOME/bin/           pic/ → $MEDIA/
-sb/ → /usr/local/bin/      vid/ → $MEDIA/
-doc/ → $DOCUMENTS/         d/   → $HOME/Downloads/
-etc/ → /etc/
+w/  → $WORKSPACE/    t/  → $TOOLS/       c/  → $HOME/.config/
+b/  → $HOME/bin/     d/  → $HOME/Downloads/   l/ → $HOME/.local/
+sb/ → /usr/local/bin/   doc/ → $DOCUMENTS/    etc/ → /etc/
+med/|pic/|vid/ → $MEDIA/
 ```
 
-**Resolution Order**:
-1. Nav index expansion (if matches prefix)
-2. Recursive case-insensitive fuzzy matching
-3. Zoxide fuzzy history lookup
-4. Returns single absolute path
+**Resolution Order**: nav index expansion → exact path → right-to-left fuzzy decomposition → glob matching with scoring → zoxide fallback.
 
-**Usage in tools**:
+**Using nav-engine in scripts**:
 ```bash
-tx w/dev ~/backup           # Move using nav indices
-pw cat c/lushrc/bashrc      # Resolve file path and cat it
-cat $(pw c/lushrc/bashrc)   # Inline substitution
-yoink ssh://host:w/file .   # Remote pull with nav-engine on both ends
-wormhole t/script b/alias   # Create symlink using shortcuts
+dest=$("$LIBDIR/shared/nav-engine.sh" "$1")          # directory resolution
+dest=$("$LIBDIR/shared/nav-engine.sh" -f "$1")       # file-aware resolution
+dest=$("$LIBDIR/shared/nav-engine.sh" --log "$1")    # with debug output
 ```
 
-**Resolution Implementation**: Nav-engine uses a sophisticated fuzzy matching algorithm:
-1. Decomposes paths right-to-left (e.g., `proj/src/main` → tries `main`, then `src/main`, then full path)
-2. Case-insensitive glob matching with intelligent scoring (depth penalty, length similarity, position bonuses)
-3. Falls back to `find` for deeper searches if glob fails
-4. Returns single best match or errors with suggestions
-
-### Package Management (SAT/notsat)
-
-Multi-source package manager wrapper with intelligent fallback and session isolation.
-
-**Sources**: cargo, npm, uv, system (apt/apk/pacman/dnf), GitHub releases, nix, brew, SAT scripts
-
-**Install Priority Order**:
-- Permanent (system): `system → brew → nix → cargo → uv → npm → sat → gh`
-- Temporary (shell): `brew → nix → cargo → uv → system → npm → sat → gh`
-
-**Manifests**:
-- System: `~/.local/share/sat/manifest` (tool=source, permanent installs)
-- Session: `~/.local/share/sat/shell/<SESSION_ID>` (tool:source:pid, ephemeral per shell)
-- Master: `~/.local/share/sat/shell/manifest` (tracks active shell sessions)
-
-**Key scripts**:
-- `bin/notsat` - Main entry point (handles install/uninstall/list/promote)
-- `bin/lib/sat/` - Source-specific installers (cargo.sh, npm.sh, gh.sh, system.sh, etc.)
-- `bin/lib/sat/common.sh` - Shared utilities, manifest management, colored output
-
-**Features**:
-- Fallback install order (tries multiple sources)
-- Automatic source detection for existing binaries
-- Session isolation (temp installs cleanup on shell exit)
-- Promotion (move temp shell tools to permanent system)
-- Colored output by source (Rust=red, Node=green, Python=blue, etc.)
+Remote bootstrapping: `yoink`/`yeet` pipe `nav-engine.sh` via stdin to SSH for remote path resolution.
 
 ## Key Utilities
 
@@ -138,237 +109,136 @@ hotline mute <cmd>  # Silent execution
 hotline dial <cmd>  # Prompt for input, pipe to command
 hotline sudo <cmd>  # Password prompt via rofi
 hotline pickup      # Attach to tmux session
-hotline             # Open rofi prompt (GUI entry)
 ```
 
-History: `/tmp/hotline_history` with `!!` and `!-N` expansion
+History: `/tmp/hotline_history` with `!!` and `!-N` expansion.
 
 ### LAN File Sharing (serve / evres)
-Paired tools for quick local network file transfer.
 
 ```bash
-serve                      # serve CWD files at http://<local-ip>:8080
-serve file1 file2 -p 9000  # specific files, custom port
-evres .13                  # consume from 192.168.1.13:8080 (subnet auto-detected)
-evres .13:9000             # custom port via suffix
-evres 192.168.1.13 --all   # full IP, download all non-interactively
+serve                      # serve CWD at http://<local-ip>:8080
+evres .13                  # consume from 192.168.1.13:8080
+evres .13:9000 --all       # custom port, download all non-interactively
 ```
 
-`evres` parses the serve HTML listing and offers an interactive numbered picker. Empty input cancels. HTML template lives in `bin/lib/serve/share.html`.
+HTML template: `bin/lib/serve/share.html`.
 
-### File Operations
-- **pw**: Path wrapper — resolves nav indices inline (`pw cat c/lushrc/bashrc`) or via substitution (`cat $(pw c/file)`)
-- **pack/unpack**: Universal archive handling (tar, zip, 7z, etc.)
-- **tx**: Navigation + file moving with undo (undo data in `/tmp/tx-undo-$USER/`)
-- **dock/undock**: SSHFS mounting — mounts remote path under `~/HOSTNAME[-subdir]` and `/tmp/dock/`
+### SSH Tools (yoink, yeet, dock, lsh)
 
-**SSH tools (yoink, yeet, dock)** share a unified connection format:
+Unified connection format: `[-p PORT] [-l USER] [user@]host[:port]`
+
+`.N` subnet shorthand via `bin/lib/shared/net.sh` works across all SSH tools:
 ```bash
-[-p PORT] [-l USER] [user@]host[:port]
+yoink .17 w/project .      # pull from LAN host using nav-engine path
+yeet --rm data.sql .17     # push and delete local source
+dock user@host:port w/proj # SSHFS mount → ~/hostname-subdir + /tmp/dock/
 ```
-The `.N` subnet shorthand (via `net.sh`) works across all three:
-```bash
-yoink .17 w/project .          # pull from 192.168.1.17 using nav-engine path
-yoink .17:8022 file.txt        # custom port
-yeet backup.db vps d/backups   # push to remote nav-engine path
-yeet --rm data.sql .17         # push and delete local source
-dock user@host:port w/proj     # mount specific remote subdir
-```
-Flags: `--rm` (delete source after transfer), `-y`/`--yes` (skip confirm), `--log` (nav-engine debug)
+
+`lsh` — transparent SSH wrapper adding `.N` shorthand, `--password` flag (sshpass), and askpass support for non-interactive shells.
 
 ### Media Tools
 
-**rec** — unified screen/audio recorder (Wayland via `wf-recorder`, audio via `ffmpeg`):
+**rec** — Wayland screen/audio recorder:
 ```bash
-rec screen              # screen + desktop audio → $MEDIA/rec/
-rec screen --mic        # screen + microphone
-rec screen --mute       # screen only
-rec audio / rec mic     # audio-only recording
-rec stop / rec delete   # save or discard
-rec deps                # check dependencies
+rec screen [--mic|--mute]  # screen recording variants
+rec audio / rec mic        # audio-only
+rec stop / rec delete      # save or discard
 ```
-State persisted to `/tmp/rec.state` so stop/delete work across shells. Audio format auto-detected from ffmpeg capabilities (pulse vs pipewire).
+State in `/tmp/rec.state`. Audio format auto-detected (pulse vs pipewire).
 
-**tranz** — universal file format converter (ffmpeg / ImageMagick / whisper-cpp / markitdown / libreoffice):
+**tranz** — universal converter (ffmpeg / ImageMagick / whisper-cpp / libreoffice):
 ```bash
-tranz video.mkv audio.flac       # extract audio
-tranz image.png .webp            # auto-name output
-tranz ./*.png .webp              # batch convert
-tranz video.mp4 transcript.txt   # transcribe via whisper
-tranz doc.docx doc.pdf           # document conversion
-tranz deps                       # check optional dependencies
+tranz video.mkv audio.flac    # extract audio
+tranz ./*.png .webp           # batch image convert
+tranz video.mp4 transcript.txt # transcribe via whisper
 ```
-Conversion routing is driven by input/output extension pairs (`video→audio`, `image→image`, etc.). Whisper config (model, device, compute type) is hardcoded at the top of the script.
+Whisper config (model, device, compute type) hardcoded at top of script.
 
-### Path Management (path utility)
-Double-symlink chain for ephemeral PATH additions:
-```
-Original → /tmp/path/basename (ephemeral) → ~/bin/xname (persistent)
-```
-Auto-cleanup via /tmp wipe + reload's broken link removal.
-
-### System Tools
+### Other Tools
+- **tx**: Navigation + file moving with undo (`/tmp/tx-undo-$USER/`)
+- **pw**: Path wrapper — `pw cat c/lushrc/bashrc` or inline `cat $(pw c/file)`
+- **pack/unpack**: Universal archive handling
 - **vibecheck**: Port scanning, process finding, hardware info, system metrics
 - **conf**: Quick access to config files
-- **lush**: Self-management (update, status, version, root)
+- **lush**: Self-management (`update`, `status`, `version`, `root`)
+- **gh-install** (`bin/lib/shared/gh-install.sh`): `gh_install <binary> <user/repo>` — lazy-installs GitHub-hosted binaries via the-satellite. Used by `tcpeek`, `netboop`, `dredge`, `dots`.
 
 ## Development Patterns
 
-### Adding New Commands
+### Adding a New Command
 
-1. Create script in `bin/` with `#!/usr/bin/env bash`
-2. Make executable: `chmod +x bin/newcmd`
-3. Run `reload` to create symlink in `~/bin/`
-4. For system-wide access: `lush root newcmd`
+1. Create `bin/newcmd` with `#!/usr/bin/env bash`, make executable
+2. `reload` — symlink appears in `~/bin/` automatically
+3. For system-wide (sudo) access: `lush root newcmd`
 
-### Adding Libraries
+### Adding a Library
 
-Place in `bin/lib/` with `.sh` extension. Source via:
-```bash
-source "$LIBDIR/library-name.sh"
-```
+- **Shared** (multiple commands use it): `bin/lib/shared/newlib.sh`, source via `source "$LIBDIR/shared/newlib.sh"`
+- **Command-specific**: `bin/lib/cmdname/helper.sh`
 
-**Existing libraries**:
-- `nav-engine.sh` — universal path resolver (see above)
-- `net.sh` — LAN utilities: `local_ip()` (detects primary IP via routing table) and `expand_local_ip()` (expands `.N` → `192.168.x.N`). Source in any script that deals with SSH/LAN hosts.
-- `spinner.sh` — dots progress indicator: `spin "Label" $PID [interval]`. Blocks until PID exits, then clears the line. Usage: `cmd & spin "Doing..." $!`
-- `sat/` — package manager source installers
+Key shared libs:
+- `shared/net.sh` — `local_ip()`, `expand_local_ip()` (`.N` → full IP)
+- `shared/spinner.sh` — `spin "Label" $PID` — blocks until PID exits
+- `shared/nav-engine.sh` — path resolution (see above)
+- `shared/gh-install.sh` — `gh_install <bin> <user/repo>` lazy installer
 
 ### Adding Configuration Modules
 
-- **Universal** (always loaded): `modules/universal/`
+- **Universal** (always loaded): `modules/universal/`, add sourcing in `source.sh`
 - **Defaults** (program selections): `modules/defaults/`
-- **Local** (user-specific): `modules/local.sh` (auto-created, git-ignored)
-
-Add sourcing in `modules/universal/source.sh` for universal modules.
-
-### Using nav-engine in Scripts
-
-```bash
-# Get absolute path from nav index or zoxide (directory-only)
-dest=$("$LIBDIR/nav-engine.sh" "$1")
-
-# File-aware resolution (-f flag)
-dest=$("$LIBDIR/nav-engine.sh" -f "$1")
-
-# Enable debug logging
-dest=$("$LIBDIR/nav-engine.sh" --log "$1")
-```
-
-### SAT Package Source
-
-Create installer in `bin/lib/sat/<source>.sh` with functions:
-- `_sat_<source>_install PACKAGE`
-- `_sat_<source>_uninstall PACKAGE`
-- `_sat_<source>_detect PACKAGE` (returns source name if package is from this source)
-
-Register in `bin/lib/sat/common.sh` arrays.
+- **Local** (user-specific, never committed): `modules/local.sh`
 
 ## Testing & Maintenance
 
-**Reload after changes**: `reload` or `source ~/.bashrc`
-
-**System-wide symlink sync**: `reload --system` (requires sudo)
-
-**Self-update**: `lush update` (git pull with change detection)
-
-**Check modifications**: `lush status` (git status wrapper)
-
-**Version info**: `lush version` (commit + age)
+```bash
+reload               # Apply changes, rebuild symlinks
+reload --system      # Also sync system-level symlinks (requires sudo)
+lush update          # git pull + reload
+lush status          # git status
+lush version         # commit + age
+```
 
 ## Important Conventions
 
-- **Single source of truth**: `$BASHRC` variable points to repo root - all paths are absolute from this anchor
-- **Self-healing**: Broken links cleaned automatically on reload, missing directories auto-created
-- **XDG compliance**: Respect standard directory variables (CONFIG_HOME, DATA_HOME, CACHE_HOME, etc.)
-- **Idempotency**: All sync/setup scripts can run multiple times safely (symlink-farm, reload, ensure-dirs)
-- **Grace handling**: Scripts succeed even if directories don't exist (`|| true`, `|| return 0`)
-- **Configuration-as-code**: Shell scripts, not YAML/TOML - enables inline logic and conditional sourcing
-- **Absolute paths only**: No relative paths in critical configs (prevents context-dependent bugs)
-- **Fuzzy-first navigation**: Nav-engine prefers user intent (fuzzy matching) over exact paths
-- **Git-ignored customization**: `modules/local.sh` for user-specific configs (never committed)
+- **Absolute paths only**: all paths anchored to `$BASHRC`, `$LIBDIR`, etc.
+- **Idempotency**: reload scripts can run multiple times safely
+- **Grace handling**: `|| true` / `|| return 0` — scripts succeed even if dirs don't exist
+- **Configuration-as-code**: shell scripts, not YAML/TOML
+- **Git-ignored customization**: `modules/local.sh` for user-specific overrides
 
-## Remote Operations
-
-SSH integration allows nav-engine on remote hosts (bootstrapped by piping `nav-engine.sh` to the remote shell). All SSH tools accept `.N` subnet shorthand via `net.sh`.
-
-```bash
-yoink host w/project/file.txt .    # pull using nav-engine path on remote
-yoink .17 d/backup.db ~/backups    # LAN shorthand + local nav dest
-yeet ./dist vps w/deploy/          # push to remote nav-engine path
-dock host w/workspace              # mount remote dir → ~/hostname-workspace
-```
-
-Enhanced SSH wrapper (`assh`) enables password prompts in non-interactive shells.
-
-## File Locations
-
-**Configs**:
-- Main: `bashrc`, `profile`
-- Modules: `modules/universal/`, `modules/defaults/`
-- Libraries: `bin/lib/`
-
-**Runtime Data**:
-- SAT manifests: `~/.local/share/sat/`
-- TX undo: `/tmp/tx-undo-$USER/`
-- Hotline history: `/tmp/hotline_history`
-- Ephemeral symlinks: `/tmp/path/`
-
-**User Overrides**:
-- `modules/local.sh` (auto-created, git-ignored)
-
-## Architecture Insights
-
-### Component Interaction Flow
-
-```
-User Command (tx, yoink, pw, z, etc.)
-    ↓
-[nav-engine.sh] - Universal path resolver
-    ├─ Nav index expansion (w/, t/, c/, etc.)
-    ├─ Exact path check
-    ├─ Right-to-left decomposition fuzzy search
-    ├─ Glob matching with intelligent scoring
-    └─ Zoxide fallback (if available)
-    ↓
-[Resolved Absolute Path]
-    ↓
-[Execute File/Navigation Operation]
-```
+## Architecture Reference
 
 ### Reload Workflow
 
 ```
 reload command
-    ↓
-source ~/.bashrc (re-sources all modules)
-    ↓
-$LIBDIR/reload.sh
-    ├─ ensure-dirs.sh (mkdir -p all workspace directories)
-    ├─ chmod +x (all scripts in bin/, TOOLS/bin/)
-    ├─ symlink-farm.sh
-    │   ├─ Cleanup: Remove broken symlinks from ~/bin, ~/.local/bin
-    │   ├─ Link: $TOOLS/bin/* → ~/bin/
-    │   ├─ Link: $BASHRC/bin/lib/* → ~/bin/lib/
-    │   ├─ Link: UV tools → ~/.local/bin/
-    │   ├─ Link: Nix apps, fonts, wallpapers
-    │   ├─ sync_media_gallery: symlinks all media files into $MEDIA_GALLERY/{pictures,videos,audio}
-    │   └─ sync_workspace_media: globs $WORKSPACE/*/ and $WORKSPACE/*/*/ — for any dir whose
-    │       relative path also exists under $MEDIA, creates media/ → $MEDIA/rel and workspace/ → $WORKSPACE/rel
-    └─ Optional: sync_system_links (if --system/-s flag, requires sudo)
+  ↓
+source ~/.bashrc
+  ↓
+$LIBDIR/reload/reload.sh
+  ├─ ensure-dirs.sh       (mkdir -p all workspace dirs)
+  ├─ chmod +x             (bin/, TOOLS/bin/)
+  ├─ symlink-farm.sh
+  │   ├─ cleanup broken symlinks
+  │   ├─ link $TOOLS/bin/* → ~/bin/
+  │   ├─ sync UV tools, fonts, Nix apps, systemd
+  │   ├─ sync_media_gallery → $MEDIA_GALLERY/{pictures,videos,audio,wallpapers}
+  │   └─ sync_workspace_media → cross-links $WORKSPACE ↔ $MEDIA
+  ├─ sync-mime-defaults.sh
+  └─ sync_system_links    (if --system flag, sudo)
 ```
 
 ### Critical File Dependency Map
 
-| File | Depends On | Used By | Purpose |
-|------|-----------|---------|---------|
-| `bashrc` | None (entry point) | Shell init | Sets BASHRC, sources modules |
-| `modules/universal/paths.sh` | `xdg.sh` | Everything | Defines all environment vars |
-| `bin/lib/nav-engine.sh` | `paths.sh` (for env vars) | tx, pw, yoink, z, wormhole | Path resolution engine |
-| `bin/lib/net.sh` | None | dock, yoink, yeet, evres | LAN IP detection + `.N` shorthand |
-| `bin/lib/spinner.sh` | None | dock, yeet | Terminal progress dots |
-| `bin/lib/symlink-farm.sh` | `paths.sh` | `reload.sh` | Maintains symlink consistency |
-| `bin/lib/reload.sh` | `ensure-dirs.sh`, `symlink-farm.sh` | `reload` alias | Orchestrates config refresh |
-| `bin/notsat` | `bin/lib/sat/*` | User package management | Multi-source package installer |
-| `bin/hotline` | tmux | Async task execution | Command launcher with notifications |
-
+| File | Used By | Purpose |
+|------|---------|---------|
+| `bashrc` | Shell init | Entry point, sets `$BASHRC`, sources modules |
+| `modules/universal/paths.sh` | Everything | Defines all env vars incl. `$LIBDIR` |
+| `bin/lib/shared/nav-engine.sh` | tx, pw, yoink, yeet, z, peek, edit, scav, wormhole | Path resolution engine |
+| `bin/lib/shared/net.sh` | dock, yoink, yeet, evres, lsh, scav | LAN IP detection + `.N` shorthand |
+| `bin/lib/shared/spinner.sh` | dock, yoink | Terminal progress indicator |
+| `bin/lib/shared/z-wrapper.sh` | `source.sh` (z function) | Enhanced zoxide wrapper |
+| `bin/lib/shared/gh-install.sh` | tcpeek, netboop, dredge, dots | Lazy GitHub binary installer |
+| `bin/lib/reload/reload.sh` | `reload` alias, `lush` | Orchestrates config refresh |
+| `bin/lib/reload/symlink-farm.sh` | `reload.sh` | Symlink maintenance |
+| `bin/hotline` | tmux | Async command launcher |

@@ -5,7 +5,7 @@
 #   kitten ssh        (better terminal integration when inside Kitty)
 
 LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
-source "$LIBDIR/net.sh"
+source "$LIBDIR/shared/net.sh"
 
 # Find the real ssh binary (skip ourselves)
 _SELF_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
@@ -80,7 +80,7 @@ fi
 
 # Set up askpass only for non-interactive shells (where SSH can't prompt directly)
 if [[ ! -t 0 ]]; then
-    export SSH_ASKPASS="${LIBDIR}/ssh-askpass"
+    export SSH_ASKPASS="${LIBDIR}/lsh/ssh-askpass"
     export SSH_ASKPASS_REQUIRE=prefer
 fi
 

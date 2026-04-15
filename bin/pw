@@ -13,7 +13,7 @@ is_path_like() {
 args=()
 for arg in "$@"; do
     if is_path_like "$arg"; then
-        resolved=$("$LIBDIR/nav-engine.sh" -f "$arg" 2>/dev/null) && args+=("$resolved") || args+=("$arg")
+        resolved=$("$LIBDIR/shared/nav-engine.sh" -f "$arg" 2>/dev/null) && args+=("$resolved") || args+=("$arg")
     else
         args+=("$arg")
     fi

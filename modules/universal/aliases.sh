@@ -3,10 +3,10 @@
 
 reload() {
     source ~/.bashrc
-    $LIBDIR/reload.sh "$@"
+    $LIBDIR/reload/reload.sh "$@"
 }
 
-alias deploy-noruelga='$LIBDIR/noruelga.sh'
+alias deploy-noruelga='$BASHRC/bin/noruelga.sh'
 
 alias launcher='$LAUNCHER'
 alias lc='$LAUNCHER'

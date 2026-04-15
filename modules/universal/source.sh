@@ -18,7 +18,7 @@ command -v zoxide &>/dev/null && eval "$(zoxide init bash)"
 # Override zoxide's z function with our enhanced wrapper
 unset -f z 2>/dev/null
 z() {
-    . "$LIBDIR/z-wrapper.sh" "$@"
+    . "$LIBDIR/shared/z-wrapper.sh" "$@"
 }
 
 # Source bash completions

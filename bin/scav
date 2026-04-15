@@ -24,7 +24,7 @@ REMOTE_HOST=""
 POSITIONALS=()
 
 # Remote guard: if bootstrapped on remote, LIBDIR won't exist — skip remote logic entirely
-if [[ -n "${LIBDIR:-}" && -f "$LIBDIR/net.sh" ]]; then
+if [[ -n "${LIBDIR:-}" && -f "$LIBDIR/shared/net.sh" ]]; then
     IS_LOCAL=true
 else
     IS_LOCAL=false
@@ -103,7 +103,7 @@ fi
 
 # --- Remote search ---
 if [[ -n "$REMOTE_HOST" ]]; then
-    source "$LIBDIR/net.sh"
+    source "$LIBDIR/shared/net.sh"
 
     # Normalize host
     CONN_USER="" CONN_HOST="" CONN_PORT=""
