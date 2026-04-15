@@ -14,6 +14,7 @@ PORT=8080
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib/serve"
 TEMPLATE="$LIB_DIR/share.html"
+source "$SCRIPT_DIR/lib/shared/net.sh"
 SERVE_DIR=$(mktemp -d /tmp/serve.XXXXXX)
 
 # ── cleanup on exit ───────────────────────────────────────────────────────────
@@ -23,17 +24,6 @@ cleanup() {
 trap cleanup EXIT
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-get_ip() {
-  # try hostname -I first (Linux), fall back to ifconfig (macOS)
-  if command -v hostname &>/dev/null; then
-    hostname -I 2>/dev/null | awk '{print $1}' | grep -v '^$' && return
-  fi
-  ifconfig 2>/dev/null \
-    | grep 'inet ' \
-    | grep -v '127.0.0.1' \
-    | awk '{print $2}' \
-    | head -1
-}
 
 human_size() {
   local file="$1"
@@ -92,7 +82,7 @@ if [[ $# -eq 0 ]]; then
 fi
 
 # ── get local IP ──────────────────────────────────────────────────────────────
-LOCAL_IP=$(get_ip)
+LOCAL_IP=$(local_ip)
 [[ -z "$LOCAL_IP" ]] && LOCAL_IP="localhost"
 
 # ── build file list ───────────────────────────────────────────────────────────
