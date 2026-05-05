@@ -7,7 +7,6 @@
 #     *i*) ;;
 #       *) return;;
 # esac
-
 # =====================================================
 # CONFIG ROOT
 # =====================================================
@@ -172,6 +171,14 @@ export QT_QPA_PLATFORMTHEME=qt5ct
 if [[ $- == *i* ]]; then
     # Cleanup broken symlinks (self-healing)
     find "$HOME" "$HOME/.config" -maxdepth 1 -xtype l -delete 2>/dev/null
+
+    # Boot tasks (only run once per boot via /tmp flag with content markers)
+    FLAG="/tmp/.lushrc_boot_cleanup"
+    if ! grep -q "wormhole" "$FLAG" 2>/dev/null; then
+        command -v wormhole &>/dev/null && wormhole kill 2>/dev/null
+        echo "wormhole" >> "$FLAG"
+    fi
+    "$BASHRC/bin/lib/reload/downloads-rotation.sh" 2>/dev/null || true
 
     # Logout functionality - clear console on exit for privacy (login shells)
     if [[ $SHLVL -eq 1 ]]; then

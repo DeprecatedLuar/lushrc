@@ -14,10 +14,6 @@ if [ -n "$BASH_VERSION" ]; then
     if [ -f "$HOME/.bashrc" ]; then
 	. "$HOME/.bashrc"
     fi
-    # rotate downloads on login
-    [ -f "$LIBDIR/reload/downloads-rotation.sh" ] && . "$LIBDIR/reload/downloads-rotation.sh"
-    # clean up wormholes on login (after reboot)
-    command -v wormhole &>/dev/null && wormhole kill 2>/dev/null
 fi
 
 # set PATH so it includes user's private bin if it exists

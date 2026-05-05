@@ -64,6 +64,11 @@ for metric in "${metrics[@]}"; do
                     pct=$((cur_freq * 100 / max_freq))
                     if [[ ${#metrics[@]} -eq 1 ]]; then
                         printf "iGPU %s%% (%s°C) @ %s/%sMHz\n" "$pct" "${pkg_temp%%.*}" "$cur_freq" "$max_freq"
+                        echo ""
+                        # List processes using iGPU via render nodes
+                        if command -v lsof &>/dev/null; then
+                            lsof /dev/dri/render* 2>/dev/null | awk 'NR>1 {if(!seen[$1,$2]++) pids[$1]=pids[$1] (pids[$1]?", ":"") $2} END {for(name in pids) print name, "(" pids[name] ")"}'
+                        fi
                     else
                         [[ -n "$pkg_temp" ]] && printf "iGPU %s%% (%s°C)\n" "$pct" "${pkg_temp%%.*}" || printf "iGPU %s%%\n" "$pct"
                     fi
@@ -98,6 +103,66 @@ for metric in "${metrics[@]}"; do
                 usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
                 nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
                 [[ -n "$usage" && -n "$nv_temp" ]] && printf "GPU %s%% (%s°C)\n" "$usage" "${nv_temp%%.*}"
+            fi
+            ;;
+        igpu)
+            has_igpu=$(lspci 2>/dev/null | grep -qi '00:02.0.*vga' && echo 1)
+            pkg_temp=$(sensors 2>/dev/null | grep -E '^Package id 0:' | sed 's/^[^+]*+\([0-9.]*\).*/\1/')
+
+            if [[ -n "$has_igpu" ]]; then
+                igpu_card=$(for c in /sys/class/drm/card[0-9]; do [[ -f "$c/gt_cur_freq_mhz" ]] && echo "$c" && break; done)
+                cur_freq=$(cat "$igpu_card/gt_cur_freq_mhz" 2>/dev/null)
+                max_freq=$(cat "$igpu_card/gt_max_freq_mhz" 2>/dev/null)
+                if [[ -n "$cur_freq" && -n "$max_freq" && "$max_freq" -gt 0 ]]; then
+                    pct=$((cur_freq * 100 / max_freq))
+                    printf "iGPU %s%% (%s°C) @ %s/%sMHz\n" "$pct" "${pkg_temp%%.*}" "$cur_freq" "$max_freq"
+                    echo ""
+                    # List processes using iGPU via render nodes
+                    if command -v lsof &>/dev/null; then
+                        lsof /dev/dri/render* 2>/dev/null | awk 'NR>1 {if(!seen[$1,$2]++) pids[$1]=pids[$1] (pids[$1]?", ":"") $2} END {for(name in pids) print name, "(" pids[name] ")"}'
+                    fi
+                else
+                    printf "iGPU\n"
+                fi
+            else
+                echo "No iGPU detected"
+            fi
+            ;;
+        dgpu)
+            discrete_addr=$(lspci -D 2>/dev/null | grep -iE 'vga|3d' | grep -v '0000:00:02' | awk '{print $1}' | head -1)
+
+            if [[ -n "$discrete_addr" ]]; then
+                power_state=$(cat "/sys/bus/pci/devices/$discrete_addr/power/runtime_status" 2>/dev/null)
+                if [[ "$power_state" == "suspended" ]]; then
+                    printf "dGPU [suspended]\n"
+                elif command -v nvidia-smi &>/dev/null; then
+                    usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
+                    nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
+                    mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
+                    mem_used=$(echo "$mem" | cut -d',' -f1 | xargs)
+                    mem_total=$(echo "$mem" | cut -d',' -f2 | xargs)
+                    [[ -n "$usage" && -n "$nv_temp" ]] && printf "dGPU %s%% (%s°C) | %sMB/%sMB\n" "$usage" "${nv_temp%%.*}" "$mem_used" "$mem_total"
+                    echo ""
+                    nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
+                        [[ -n "$line" ]] && echo "$line"
+                    done
+                fi
+            elif command -v nvidia-smi &>/dev/null; then
+                # Single NVIDIA GPU (no hybrid)
+                usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
+                nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
+                mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
+                mem_used=$(echo "$mem" | cut -d',' -f1 | xargs)
+                mem_total=$(echo "$mem" | cut -d',' -f2 | xargs)
+                if [[ -n "$usage" && -n "$nv_temp" ]]; then
+                    printf "GPU %s%% (%s°C) | %sMB/%sMB\n" "$usage" "${nv_temp%%.*}" "$mem_used" "$mem_total"
+                    echo ""
+                    nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
+                        [[ -n "$line" ]] && echo "$line"
+                    done
+                fi
+            else
+                echo "No dGPU detected"
             fi
             ;;
         fan|fans)

@@ -16,10 +16,8 @@ cleanup_broken_links() {
 cleanup_empty_home_symlinks() {
     for link in "$HOME"/*/; do
         [ -L "${link%/}" ] || continue
-        if [[ "$(basename "${link%/}")" == "wormhole" ]]; then
-            [ -e "${link%/}" ] || rm "${link%/}"
-            continue
-        fi
+        # Skip wormholes - they're managed by the wormhole command
+        [[ "$(basename "${link%/}")" == "wormhole" ]] && continue
         local target
         target=$(readlink -f "${link%/}")
         [ -d "$target" ] || continue
@@ -97,6 +95,14 @@ if [ -d "$HOME/.config/systemd" ]; then
     setup_sys "$HOME/.config/systemd"
     [ -L "$HOME/.config/systemd/user" ] || ln -sf . "$HOME/.config/systemd/user"
 fi
+link_contents "$BASHRC/storage/services" "$HOME/.config/systemd"
+
+for svc in "$BASHRC/storage/services"/*.service; do
+    name=$(basename "$svc")
+    if ! systemctl --user is-enabled "$name" &>/dev/null; then
+        systemctl --user enable "$name" 2>/dev/null || true
+    fi
+done
 
 #--[AUTOSTART]----------------------------------
 
@@ -138,9 +144,10 @@ sync_media_gallery() {
         esac
     done < <(find "$MEDIA" \
         -not -path "$MEDIA/gallery/*" \
-        -not -path "$MEDIA/screenshots/*" \
-        -not -path "$MEDIA/wallpapers/*" \
-        -not -path "$MEDIA/wpp/*" \
+        -not -ipath "$MEDIA/screenshots/*" \
+        -not -ipath "$MEDIA/wallpapers/*" \
+        -not -ipath "$MEDIA/wallpaper/*" \
+        -not -ipath "$MEDIA/wpp/*" \
         -type f -print0 2>/dev/null)
 }
 
@@ -150,8 +157,9 @@ sync_media_gallery
 
 sync_wallpapers_gallery() {
     local wpp_dir=""
-    [ -d "$MEDIA/wallpapers" ] && wpp_dir="$MEDIA/wallpapers"
-    [ -d "$MEDIA/wpp" ] && wpp_dir="$MEDIA/wpp"
+    for _d in wallpapers Wallpapers wallpaper Wallpaper wpp Wpp; do
+        [ -d "$MEDIA/$_d" ] && wpp_dir="$MEDIA/$_d" && break
+    done
     [ -n "$wpp_dir" ] || return 0
 
     mkdir -p "$WALLPAPERS_GALLERY"

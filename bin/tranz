@@ -239,6 +239,18 @@ convert_one() {
             esac
             ;;
 
+        video→image)
+            if [ "$OUTPUT_EXT_LOWER" = "gif" ]; then
+                CURRENT_OUTPUT=""
+                CONVERT_PID=""
+                jif --cap 9 "$INPUT" "$OUTPUT"
+                return $?
+            fi
+            printf " — skipping (unsupported: %s → %s)\n" "$INPUT_EXT_LOWER" "$OUTPUT_EXT_LOWER"
+            CURRENT_OUTPUT=""
+            return 1
+            ;;
+
         video→video)
             ffmpeg -i "$INPUT" "$OUTPUT" -y >/dev/null 2>&1 &
             ;;

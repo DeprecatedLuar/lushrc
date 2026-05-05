@@ -3,6 +3,11 @@
 SESSION="hotline"
 INPUT_SCRIPT="${ROFI_INPUT_SCRIPT:-$HOME/.config/lushrc/bin/lib/input/input-text.sh}"
 HOTLINE_HISTORY="/tmp/hotline_history"
+NOTIFY_TITLE="☎ Hotline"
+POLL_INTERVAL=0.1
+HISTORY_TAIL=10
+MUTE_PREFIX="mute:"
+HOLD_PREFIX="hold:"
 
 # --- Helpers ---
 
@@ -54,7 +59,7 @@ notify() {
 # Read and clean output from temp file, then notify
 notify_from_file() {
     local output_file="$1"
-    local title="${2:-☎ Hotline}"
+    local title="${2:-$NOTIFY_TITLE}"
 
     [[ ! -f "$output_file" ]] && return 1
 
@@ -79,7 +84,7 @@ auto_clean() {
     while read -r pane_id pane_dead pane_title; do
         if [[ "$pane_dead" == "1" ]]; then
             # Notify unless muted or held (user was watching it)
-            if [[ "$pane_title" != mute:* ]] && [[ "$pane_title" != hold:* ]]; then
+            if [[ "$pane_title" != ${MUTE_PREFIX}* ]] && [[ "$pane_title" != ${HOLD_PREFIX}* ]]; then
                 notify_from_file "$(pane_output_file "$pane_id")"
             fi
             tmux kill-pane -t "$pane_id" 2>/dev/null
@@ -118,7 +123,7 @@ cmd_exec() {
         [[ -z "$password" ]] && return
 
         if ! echo "$password" | sudo -S -v 2>/dev/null; then
-            notify "☎ Hotline" "Authentication failed"
+            notify "$NOTIFY_TITLE" "Authentication failed"
             return
         fi
         command="echo \"$(escape_for_shell "$password")\" | sudo -S -p '' $command"
@@ -141,9 +146,9 @@ cmd_exec() {
 
     # Set pane title based on mode (for auto_clean to know whether to notify)
     if $mute_mode; then
-        tmux select-pane -t "$target_pane" -T "mute:$command"
+        tmux select-pane -t "$target_pane" -T "${MUTE_PREFIX}$command"
     elif $hold_mode; then
-        tmux select-pane -t "$target_pane" -T "hold:$command"
+        tmux select-pane -t "$target_pane" -T "${HOLD_PREFIX}$command"
     else
         tmux select-pane -t "$target_pane" -T "$command"
     fi
@@ -168,13 +173,13 @@ cmd_exec() {
         # Fire-and-forget from interactive terminal; block when called from GUI/scripts
         if [ -t 0 ] && [ -z "$HOTLINE_SPAWN" ]; then
             ( while tmux list-panes -t "$SESSION" -F "#{pane_id}" 2>/dev/null | grep -q "^${target_pane}$"; do
-                sleep 0.1
+                sleep "$POLL_INTERVAL"
               done
               notify_from_file "$output_file" ) &
             disown
         else
             while tmux list-panes -t "$SESSION" -F "#{pane_id}" 2>/dev/null | grep -q "^${target_pane}$"; do
-                sleep 0.1
+                sleep "$POLL_INTERVAL"
             done
             notify_from_file "$output_file"
         fi
@@ -213,9 +218,9 @@ cmd_yellowpage() {
         notify "☎ Hotline" "No history"
         return
     fi
-    local history=$(tail -10 "$HOTLINE_HISTORY")
+    local history=$(tail -"$HISTORY_TAIL" "$HOTLINE_HISTORY")
     echo "$history"
-    notify "☎ Hotline" "$history"
+    notify "$NOTIFY_TITLE" "$history"
 }
 
 resolve_history() {
@@ -338,16 +343,23 @@ cmd_deps() {
     $ok || { echo ""; echo "missing required dependencies"; exit 1; }
 }
 
-case "$1" in
-    "")              cmd_input ;;
-    -h|--help|help)  show_help ;;
-    deps)            cmd_deps ;;
-    pickup)          cmd_show ;;
-    list)            cmd_list ;;
-    yellowpage|ylpg) cmd_yellowpage ;;
-    *)
-        resolved=$(resolve_history "$*")
-        save_to_history "$resolved"
-        cmd_exec "$resolved"
-        ;;
-esac
+# --- Entry Point ---
+
+main() {
+    case "$1" in
+        "")              cmd_input ;;
+        -h|--help|help)  show_help ;;
+        deps)            cmd_deps ;;
+        pickup)          cmd_show ;;
+        list)            cmd_list ;;
+        yellowpage|ylpg) cmd_yellowpage ;;
+        *)
+            local resolved
+            resolved=$(resolve_history "$*")
+            save_to_history "$resolved"
+            cmd_exec "$resolved"
+            ;;
+    esac
+}
+
+main "$@"
