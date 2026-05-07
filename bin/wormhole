@@ -12,11 +12,11 @@ if [[ -n "$2" ]]; then
     if [[ -e "$1" ]]; then
         source_path=$(realpath "$1")
     else
-        source_path=$(~/bin/lib/nav-engine.sh "$1") || exit 1
+        source_path=$("$LIBDIR/shared/nav-engine.sh" "$1") || exit 1
     fi
 
     # Resolve destination
-    dest_path=$(~/bin/lib/nav-engine.sh "$2") || exit 1
+    dest_path=$("$LIBDIR/shared/nav-engine.sh" "$2") || exit 1
 
     # Determine final symlink path
     if [[ -d "$dest_path" ]]; then
@@ -42,7 +42,7 @@ fi
 if [[ -z "$1" ]]; then
     target="$PWD"
 else
-    target=$(~/bin/lib/nav-engine.sh "$1") || exit 1
+    target=$("$LIBDIR/shared/nav-engine.sh" "$1") || exit 1
 fi
 
 # Safety check for each wormhole location
