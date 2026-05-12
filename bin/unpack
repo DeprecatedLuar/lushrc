@@ -9,13 +9,18 @@ check_dependency() {
   fi
 }
 
-KEEP_ORIGINAL=false
+KEEP_ORIGINAL=true
 DEBUG=false
 
 while [[ "$1" == -* ]]; do
   case "$1" in
-    -c|--copy)
-      KEEP_ORIGINAL=true
+    -h|--help)
+      shift
+      set -- ""
+      break
+      ;;
+    --rm|--remove)
+      KEEP_ORIGINAL=false
       shift
       ;;
     --debug)
@@ -30,9 +35,9 @@ while [[ "$1" == -* ]]; do
 done
 
 if [ -z "$1" ]; then
-  echo "Usage: unpack [-c] [--debug] <archive_file>"
-  echo "  -c, --copy  Keep original archive file (copy mode)"
-  echo "  --debug     Show debug information"
+  echo "Usage: unpack [--rm] [--debug] <archive_file>"
+  echo "  --rm, --remove  Remove original archive after unpacking"
+  echo "  --debug         Show debug information"
   exit 1
 fi
 

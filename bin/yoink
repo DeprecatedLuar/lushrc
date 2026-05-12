@@ -9,18 +9,42 @@ source "$LIBDIR/shared/spinner.sh"
 
 REMOVE_SOURCE=false
 SKIP_CONFIRM=false
+DEBUG=false
 NAV_FLAGS=""
 CONN_USER=""
 CONN_HOST=""
 CONN_PORT=""
 FLAG_PORT=""
 
+show_help() {
+    echo "Usage: yoink [OPTIONS] [user@]host[:port] [remote_path] [local_dest]"
+    echo ""
+    echo "Pull files from remote machines using rsync over SSH."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo "  --rm                Remove source files after transfer"
+    echo "  -y, --yes           Skip confirmation prompt"
+    echo "  --debug             Enable debug output (path resolution)"
+    echo "  -p PORT             SSH port (can also use host:port syntax)"
+    echo "  -l USER             SSH user (can also use user@host syntax)"
+    echo ""
+    echo "Examples:"
+    echo "  yoink nuremberg                      # pull \$HOME"
+    echo "  yoink .17:8022 file.txt              # pull file from LAN host"
+    echo "  yoink vps d/backup.db ~/backups      # nav-engine path, local dest"
+    echo "  yoink --rm server w/data.sql .       # pull and delete remote source"
+    echo "  yoink --debug .17 ~/Documents/foo    # debug path resolution"
+    exit 0
+}
+
 POSITIONALS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)      show_help ;;
         --rm)           REMOVE_SOURCE=true; shift ;;
         -y|--yes)       SKIP_CONFIRM=true; shift ;;
-        --log)          NAV_FLAGS="--log"; shift ;;
+        --debug)        DEBUG=true; NAV_FLAGS="--debug"; shift ;;
         -p)             FLAG_PORT="$2"; shift 2 ;;
         -l)             CONN_USER="$2"; shift 2 ;;
         -*)             echo "Unknown option: $1" >&2; exit 1 ;;
@@ -30,14 +54,7 @@ done
 set -- "${POSITIONALS[@]}"
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: yoink [--rm] [-y] [-p PORT] [-l USER] [user@]host[:port] [remote_path] [local_dest]"
-    echo ""
-    echo "Examples:"
-    echo "  yoink nuremberg                      # pull \$HOME"
-    echo "  yoink .17:8022 file.txt              # pull file from LAN host"
-    echo "  yoink vps d/backup.db ~/backups      # nav-engine path, local dest"
-    echo "  yoink --rm server w/data.sql .       # pull and delete remote source"
-    exit 1
+    show_help
 fi
 
 # --- Normalize host ---
@@ -68,11 +85,19 @@ SSH_ARGS=()
 [[ -n "$CONN_USER" ]] && SSH_TARGET="$CONN_USER@$CONN_HOST" || SSH_TARGET="$CONN_HOST"
 
 # --- Resolve remote path via nav-engine ---
-REMOTE_PATH=$(cat "$LIBDIR/shared/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
-    "TERM=dumb bash -s -- $NAV_FLAGS -f '$REMOTE_PATH_QUERY'" 2>/dev/null) || {
-    echo "yoink: failed to resolve '$REMOTE_PATH_QUERY' on $SSH_TARGET" >&2
-    exit 1
-}
+if [[ "$DEBUG" == true ]]; then
+    REMOTE_PATH=$(cat "$LIBDIR/shared/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+        "TERM=dumb bash -s -- $NAV_FLAGS -f '$REMOTE_PATH_QUERY'") || {
+        echo "yoink: failed to resolve '$REMOTE_PATH_QUERY' on $SSH_TARGET" >&2
+        exit 1
+    }
+else
+    REMOTE_PATH=$(cat "$LIBDIR/shared/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+        "TERM=dumb bash -s -- $NAV_FLAGS -f '$REMOTE_PATH_QUERY'" 2>/dev/null) || {
+        echo "yoink: failed to resolve '$REMOTE_PATH_QUERY' on $SSH_TARGET" >&2
+        exit 1
+    }
+fi
 
 if ! ssh "${SSH_ARGS[@]}" "$SSH_TARGET" "command -v rsync >/dev/null 2>&1"; then
     echo "yoink: rsync not found on $SSH_TARGET" >&2

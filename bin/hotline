@@ -2,7 +2,8 @@
 
 SESSION="hotline"
 INPUT_SCRIPT="${ROFI_INPUT_SCRIPT:-$HOME/.config/lushrc/bin/lib/input/input-text.sh}"
-HOTLINE_HISTORY="/tmp/hotline_history"
+HOTLINE_DIR="/tmp/hotline-$USER"
+HOTLINE_HISTORY="$HOTLINE_DIR/history"
 NOTIFY_TITLE="☎ Hotline"
 POLL_INTERVAL=0.1
 HISTORY_TAIL=10
@@ -73,7 +74,7 @@ notify_from_file() {
 
 # Generate temp file path for pane output
 pane_output_file() {
-    echo "/tmp/hotline_${1//[^a-zA-Z0-9]/_}"
+    echo "$HOTLINE_DIR/output_${1//[^a-zA-Z0-9]/_}"
 }
 
 # --- Core Functions ---
@@ -128,6 +129,8 @@ cmd_exec() {
         fi
         command="echo \"$(escape_for_shell "$password")\" | sudo -S -p '' $command"
     fi
+
+    mkdir -p "$HOTLINE_DIR"
 
     tmux has-session -t "$SESSION" 2>/dev/null || \
         tmux new-session -d -s "$SESSION"
@@ -270,6 +273,7 @@ save_to_history() {
     [[ "$cmd" == "list" ]] && return
     [[ "$cmd" == "yellowpage" || "$cmd" == "ylpg" ]] && return
 
+    mkdir -p "$HOTLINE_DIR"
     echo "$cmd" >> "$HOTLINE_HISTORY"
 }
 

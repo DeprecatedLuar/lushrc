@@ -18,9 +18,9 @@ done
 
 query="$1"
 
-# Debug helper - write directly to terminal (bypasses buffering and z-wrapper capture)
+# Debug helper - write to stderr (portable, works in all environments)
 debug() {
-    [[ "$DEBUG" == true ]] && printf "\033[2m[nav] %s\033[0m\n" "$*" > /dev/tty
+    [[ "$DEBUG" == true ]] && printf "\033[2m[nav] %s\033[0m\n" "$*" >&2
 }
 
 # Show similar directories as suggestions

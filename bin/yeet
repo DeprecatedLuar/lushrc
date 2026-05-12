@@ -9,18 +9,42 @@ source "$LIBDIR/shared/spinner.sh"
 
 REMOVE_SOURCE=false
 SKIP_CONFIRM=false
+DEBUG=false
 NAV_FLAGS=""
 CONN_USER=""
 CONN_HOST=""
 CONN_PORT=""
 FLAG_PORT=""
 
+show_help() {
+    echo "Usage: yeet [OPTIONS] local_source [user@]host[:port] [remote_path]"
+    echo ""
+    echo "Send files to remote machines using rsync over SSH."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo "  --rm                Remove source files after transfer"
+    echo "  -y, --yes           Skip confirmation prompt"
+    echo "  --debug             Enable debug output (path resolution)"
+    echo "  -p PORT             SSH port (can also use host:port syntax)"
+    echo "  -l USER             SSH user (can also use user@host syntax)"
+    echo ""
+    echo "Examples:"
+    echo "  yeet file.txt nuremberg              # send to remote \$HOME"
+    echo "  yeet backup.db .17:8022              # send to LAN host"
+    echo "  yeet project/ vps d/backups          # nav-engine remote path"
+    echo "  yeet --rm data.sql server w/data     # send and delete local source"
+    echo "  yeet --debug data.db .17 ~/backups   # debug path resolution"
+    exit 0
+}
+
 POSITIONALS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)      show_help ;;
         --rm)           REMOVE_SOURCE=true; shift ;;
         -y|--yes)       SKIP_CONFIRM=true; shift ;;
-        --log)          NAV_FLAGS="--log"; shift ;;
+        --debug)        DEBUG=true; NAV_FLAGS="--debug"; shift ;;
         -p)             FLAG_PORT="$2"; shift 2 ;;
         -l)             CONN_USER="$2"; shift 2 ;;
         -*)             echo "Unknown option: $1" >&2; exit 1 ;;
@@ -30,14 +54,7 @@ done
 set -- "${POSITIONALS[@]}"
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: yeet [--rm] [-y] [-p PORT] [-l USER] local_source [user@]host[:port] [remote_path]"
-    echo ""
-    echo "Examples:"
-    echo "  yeet file.txt nuremberg              # send to remote \$HOME"
-    echo "  yeet backup.db .17:8022              # send to LAN host"
-    echo "  yeet project/ vps d/backups          # nav-engine remote path"
-    echo "  yeet --rm data.sql server w/data     # send and delete local source"
-    exit 1
+    show_help
 fi
 
 LOCAL_SOURCE="$1"
@@ -69,11 +86,19 @@ SSH_ARGS=()
 [[ -n "$CONN_USER" ]] && SSH_TARGET="$CONN_USER@$CONN_HOST" || SSH_TARGET="$CONN_HOST"
 
 # --- Resolve remote path via nav-engine ---
-DEST=$(cat "$LIBDIR/shared/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
-    "TERM=dumb bash -s -- $NAV_FLAGS '$DEST_QUERY'" 2>/dev/null) || {
-    echo "yeet: failed to resolve '$DEST_QUERY' on $SSH_TARGET" >&2
-    exit 1
-}
+if [[ "$DEBUG" == true ]]; then
+    DEST=$(cat "$LIBDIR/shared/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+        "TERM=dumb bash -s -- $NAV_FLAGS '$DEST_QUERY'") || {
+        echo "yeet: failed to resolve '$DEST_QUERY' on $SSH_TARGET" >&2
+        exit 1
+    }
+else
+    DEST=$(cat "$LIBDIR/shared/nav-engine.sh" | ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
+        "TERM=dumb bash -s -- $NAV_FLAGS '$DEST_QUERY'" 2>/dev/null) || {
+        echo "yeet: failed to resolve '$DEST_QUERY' on $SSH_TARGET" >&2
+        exit 1
+    }
+fi
 
 if ! ssh "${SSH_ARGS[@]}" "$SSH_TARGET" "command -v rsync >/dev/null 2>&1"; then
     echo "yeet: rsync not found on $SSH_TARGET" >&2

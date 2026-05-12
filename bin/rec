@@ -6,26 +6,45 @@ OUT_DIR="${MEDIA:-$HOME/Media}/rec"
 LIBDIR="${LIBDIR:-$HOME/.config/lushrc/bin/lib}"
 # shellcheck source=bin/lib/rec/fix-color.sh
 source "$LIBDIR/rec/fix-color.sh"
-TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+TIMESTAMP=$(date +%y-%m-%d_%H-%M)
 STOP_TIMEOUT=20
 DAEMON=false
+NOTIFY=false
 
 _die()     { echo "$*" >&2; exit 1; }
 _log()     { echo "$*"; }
 _need()    { command -v "$1" &>/dev/null || _die "$1 not found"; }
+_notify()  { command -v notify-send &>/dev/null && notify-send -a "rec" "$@" || true; }
 
 _load_state() {
     [[ -f "$STATE" ]] || return 1
     # shellcheck disable=SC1090
-    source "$STATE"
+    source "$STATE" 2>/dev/null || { rm -f "$STATE"; return 1; }
 }
 
 _save_state() {
-    printf 'PID=%s\nFILE=%s\nMODE=%s\n' "$1" "$2" "$3" > "$STATE"
+    printf 'PID=%s\nFILE="%s"\nMODE="%s"\n' "$1" "$2" "$3" > "$STATE"
 }
 
 _alive() {
     kill -0 "$PID" 2>/dev/null
+}
+
+_unique_filename() {
+    local base="$1"
+    local ext="$2"
+    local file="${base}.${ext}"
+
+    if [[ ! -e "$file" ]]; then
+        echo "$file"
+        return
+    fi
+
+    local n=1
+    while [[ -e "${base} (${n}).${ext}" ]]; do
+        ((n++))
+    done
+    echo "${base} (${n}).${ext}"
 }
 
 _wait_exit() {
@@ -35,9 +54,17 @@ _wait_exit() {
 
 _hold() {
     local pid=$1
-    _log "Ctrl+C to stop"
-    trap 'cmd_stop; exit 0' INT
-    wait "$pid"
+    trap 'printf "\r\033[K"; cmd_stop; exit 0' INT
+
+    local start=$(date +%s)
+    while kill -0 "$pid" 2>/dev/null; do
+        local now=$(date +%s)
+        local elapsed=$((now - start))
+        printf "\r%02d:%02d" $((elapsed / 60)) $((elapsed % 60))
+        sleep 1
+    done
+    echo
+
     trap - INT
 }
 
@@ -77,7 +104,8 @@ cmd_stop() {
     kill -SIGINT "$PID" 2>/dev/null
     _wait_exit
     fix_color "$FILE"
-    _log "saved: $FILE"
+    _log "saved $(basename "$FILE")"
+    _notify "Recording saved" "$(basename "$FILE")"
     rm -f "$STATE"
 }
 
@@ -89,7 +117,8 @@ cmd_delete() {
         _wait_exit
     fi
     rm -f "$file" "$STATE"
-    _log "deleted: $file"
+    _log "deleted $(basename "$file")"
+    _notify "Recording deleted" "$(basename "$file")"
 }
 
 cmd_screen() {
@@ -100,11 +129,14 @@ cmd_screen() {
     for arg in "$@"; do
         case "$arg" in
             --mic) audio=mic ;;
+            --notify) NOTIFY=true ;;
         esac
     done
 
-    local file="$OUT_DIR/rec_${TIMESTAMP}.mp4"
-    mkdir -p "$OUT_DIR"
+    mkdir -p "$OUT_DIR/video"
+    local name="screen"
+    [[ "$audio" == mic ]] && name="screen-mic"
+    local file=$(_unique_filename "$OUT_DIR/video/${TIMESTAMP}_${name}" "mp4")
 
     local -a args=(-f "$file")
 
@@ -116,7 +148,8 @@ cmd_screen() {
     wf-recorder "${args[@]}" &>/dev/null &
     local pid=$!
     _save_state "$pid" "$file" "screen${audio:+:$audio}"
-    _log "recording screen → $file"
+    _log "recording screen${audio:+ + $audio}"
+    [[ "$NOTIFY" == true ]] && _notify "Recording started" "Screen${audio:+ + $audio}"
     [[ "$DAEMON" == true ]] || _hold "$pid"
 }
 
@@ -129,11 +162,15 @@ cmd_desktop() {
         case "$arg" in
             --mic)             audio=mic ;;
             --no-audio|--mute) audio=none ;;
+            --notify)          NOTIFY=true ;;
         esac
     done
 
-    local file="$OUT_DIR/rec_${TIMESTAMP}.mp4"
-    mkdir -p "$OUT_DIR"
+    mkdir -p "$OUT_DIR/video"
+    local name="desktop"
+    [[ "$audio" == mic ]] && name="desktop-mic"
+    [[ "$audio" == none ]] && name="screen-mute"
+    local file=$(_unique_filename "$OUT_DIR/video/${TIMESTAMP}_${name}" "mp4")
 
     local -a args=(-f "$file")
 
@@ -149,7 +186,8 @@ cmd_desktop() {
     wf-recorder "${args[@]}" &>/dev/null &
     local pid=$!
     _save_state "$pid" "$file" "desktop:$audio"
-    _log "recording desktop → $file"
+    _log "recording desktop + $audio"
+    [[ "$NOTIFY" == true ]] && _notify "Recording started" "Desktop + $audio"
     [[ "$DAEMON" == true ]] || _hold "$pid"
 }
 
@@ -157,16 +195,23 @@ cmd_audio() {
     _load_state && _alive && _die "already recording [$MODE]"
     _need ffmpeg
 
+    for arg in "$@"; do
+        case "$arg" in
+            --notify) NOTIFY=true ;;
+        esac
+    done
+
     local monitor; monitor=$(_get_monitor)
     [[ -n "$monitor" ]] || _die "no audio monitor found"
 
-    local file="$OUT_DIR/rec_${TIMESTAMP}.opus"
-    mkdir -p "$OUT_DIR"
+    mkdir -p "$OUT_DIR/audio"
+    local file=$(_unique_filename "$OUT_DIR/audio/${TIMESTAMP}_desktop" "opus")
 
     ffmpeg -loglevel error -f "$(_audio_fmt)" -i "$monitor" -c:a libopus -b:a 64k "$file" &>/dev/null &
     local pid=$!
     _save_state "$pid" "$file" "audio"
-    _log "recording desktop audio → $file"
+    _log "recording desktop audio"
+    [[ "$NOTIFY" == true ]] && _notify "Recording started" "Desktop audio"
     [[ "$DAEMON" == true ]] || _hold "$pid"
 }
 
@@ -174,14 +219,21 @@ cmd_mic() {
     _load_state && _alive && _die "already recording [$MODE]"
     _need ffmpeg
 
-    local file="$OUT_DIR/rec_${TIMESTAMP}.opus"
-    mkdir -p "$OUT_DIR"
+    for arg in "$@"; do
+        case "$arg" in
+            --notify) NOTIFY=true ;;
+        esac
+    done
+
+    mkdir -p "$OUT_DIR/audio"
+    local file=$(_unique_filename "$OUT_DIR/audio/${TIMESTAMP}_mic" "opus")
 
     local mic; mic=$(_get_mic)
     ffmpeg -loglevel error -f "$(_audio_fmt)" -i "${mic:-default}" -c:a libopus -b:a 64k "$file" &>/dev/null &
     local pid=$!
     _save_state "$pid" "$file" "mic"
-    _log "recording mic → $file"
+    _log "recording mic"
+    [[ "$NOTIFY" == true ]] && _notify "Recording started" "Microphone"
     [[ "$DAEMON" == true ]] || _hold "$pid"
 }
 
@@ -206,19 +258,26 @@ cmd_check() {
     $ok || { echo ""; _die "some dependencies missing"; }
 }
 
-[[ "$1" == "-d" || "$1" == "--daemon" ]] && { DAEMON=true; shift; }
+# Parse global flags
+while [[ "$1" == -* ]]; do
+    case "$1" in
+        -d|--daemon) DAEMON=true; shift ;;
+        -n|--notify) NOTIFY=true; shift ;;
+        *) break ;;
+    esac
+done
 
 case "$1" in
     deps)            cmd_check ;;
     screen)   shift; cmd_screen "$@" ;;
     desktop)  shift; cmd_desktop "$@" ;;
-    audio)           cmd_audio ;;
-    mic)             cmd_mic ;;
+    audio)    shift; cmd_audio "$@" ;;
+    mic)      shift; cmd_mic "$@" ;;
     stop)                      cmd_stop ;;
     delete|--rm|--remove)     cmd_delete ;;
     status)          cmd_status ;;
     *)
-        echo "usage: rec [-d] <command> [options]"
+        echo "usage: rec [-d] [-n] <command> [options]"
         echo ""
         echo "  rec screen             record screen only (no audio)"
         echo "  rec screen --mic       record screen + microphone"
@@ -232,5 +291,6 @@ case "$1" in
         echo "  rec status             show recording state"
         echo ""
         echo "  -d, --daemon           run in background (default: hold terminal, Ctrl+C to stop)"
+        echo "  -n, --notify           send notification when recording starts (stop always notifies)"
         ;;
 esac

@@ -11,6 +11,7 @@ set -euo pipefail
 
 # ── config ────────────────────────────────────────────────────────────────────
 PORT=8080
+TUNNEL=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib/serve"
 TEMPLATE="$LIB_DIR/share.html"
@@ -20,6 +21,10 @@ SERVE_DIR=$(mktemp -d /tmp/serve.XXXXXX)
 # ── cleanup on exit ───────────────────────────────────────────────────────────
 cleanup() {
   rm -rf "$SERVE_DIR"
+  if [[ "$TUNNEL" == true ]]; then
+    source "$LIB_DIR/tunnel.sh"
+    stop_tunnel
+  fi
 }
 trap cleanup EXIT
 
@@ -61,20 +66,40 @@ usage:
 
 options:
   -p <port>                  port (default: 8080)
+  -t, --tunnel               expose via cloudflare tunnel (internet access)
   -h                         show this help
 EOF
   exit 0
 }
 
 # ── args ──────────────────────────────────────────────────────────────────────
-while getopts "p:h" opt; do
-  case $opt in
-    p) PORT="$OPTARG" ;;
-    h) usage ;;
-    *) usage ;;
+FILES=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p)
+      PORT="$2"
+      shift 2
+      ;;
+    -t|--tunnel)
+      TUNNEL=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    -*)
+      echo "unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      FILES+=("$1")
+      shift
+      ;;
   esac
 done
-shift $((OPTIND - 1))
+
+# Restore positional parameters from FILES array
+set -- "${FILES[@]}"
 
 # ── no-args: expand to all files in cwd ───────────────────────────────────────
 if [[ $# -eq 0 ]]; then
@@ -136,6 +161,18 @@ HTML="${HTML//\{\{FILE_LIST\}\}/$FILE_LIST_HTML}"
 
 echo "$HTML" > "$SERVE_DIR/index.html"
 
+# ── start tunnel if requested ─────────────────────────────────────────────────
+PUBLIC_URL=""
+if [[ "$TUNNEL" == true ]]; then
+  source "$LIB_DIR/tunnel.sh"
+  echo ""
+  echo "  · starting cloudflare tunnel..." >&2
+  PUBLIC_URL=$(start_tunnel "$PORT") || {
+    echo "error: tunnel failed to start" >&2
+    exit 1
+  }
+fi
+
 # ── print info ────────────────────────────────────────────────────────────────
 echo ""
 for served in "$SERVE_DIR"/*; do
@@ -144,6 +181,9 @@ for served in "$SERVE_DIR"/*; do
 done
 echo ""
 echo "  ↗  http://${LOCAL_IP}:${PORT}"
+if [[ -n "$PUBLIC_URL" ]]; then
+  echo "  ⇢  $PUBLIC_URL"
+fi
 echo ""
 
 # ── start server ─────────────────────────────────────────────────────────────

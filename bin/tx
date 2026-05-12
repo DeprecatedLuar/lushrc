@@ -6,10 +6,10 @@ NAV_FLAGS=""
 COPY_MODE=""
 while [[ "$1" == -* ]]; do
     case "$1" in
-        --log) NAV_FLAGS="--log"; shift ;;
+        --debug) NAV_FLAGS="--debug"; shift ;;
         -c|--copy) COPY_MODE=1; shift ;;
         *) shift ;;
-    esac
+        esac
 done
 
 if [[ $# -ge 2 ]]; then

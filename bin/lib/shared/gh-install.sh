@@ -7,7 +7,7 @@ gh_install() {
     local repo="$2"
 
     local real_home="$HOME"
-    [[ -n "$SUDO_USER" ]] && real_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+    [[ -n "${SUDO_USER:-}" ]] && real_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
     local -a search_paths=("$real_home/bin" "$real_home/.local/bin" /usr/local/bin /usr/bin /bin)
     local real
 

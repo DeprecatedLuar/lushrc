@@ -9,7 +9,7 @@ check_dependency() {
   fi
 }
 
-KEEP_ORIGINAL=false
+KEEP_ORIGINAL=true
 TARGET=""
 FORMAT=""
 VOLUME=""
@@ -20,8 +20,12 @@ while [ $i -lt $# ]; do
   eval arg=\${$i}
 
   case "$arg" in
-    -c|--copy)
-      KEEP_ORIGINAL=true
+    -h|--help)
+      TARGET=""
+      break
+      ;;
+    --rm|--remove)
+      KEEP_ORIGINAL=false
       ;;
     -v|--volume|-s|--split)
       i=$((i + 1))
@@ -60,15 +64,15 @@ while [ $i -lt $# ]; do
 done
 
 if [ -z "$TARGET" ]; then
-  echo "Usage: pack [-c] [-v|-s SIZE|COUNT] <file_or_folder> [.extension]"
+  echo "Usage: pack [--rm] [-v|-s SIZE|COUNT] <file_or_folder> <.extension>"
   echo ""
   echo "Options:"
-  echo "  -c, --copy              Keep original file/folder (default: remove)"
+  echo "  --rm, --remove          Remove original file/folder after packing"
   echo "  -v, --volume SIZE       Split into volumes by size (e.g., '100mb', '1g')"
   echo "  -s, --split SIZE|COUNT  Split by size or number of parts (e.g., '2', '50mb')"
   echo ""
   echo "Supported formats:"
-  echo "  .tar.gz, .tgz           Gzip compressed tar (default)"
+  echo "  .tar.gz, .tgz           Gzip compressed tar (most common)"
   echo "  .tar.bz2, .tbz2         Bzip2 compressed tar"
   echo "  .tar.xz, .txz           XZ compressed tar"
   echo "  .tar                    Uncompressed tar"
@@ -78,8 +82,9 @@ if [ -z "$TARGET" ]; then
   echo "  .7z                     7-Zip archive"
   echo ""
   echo "Examples:"
-  echo "  pack folder             # Create folder.tar.gz"
-  echo "  pack -v 100mb folder    # Split into 100MB volumes"
+  echo "  pack folder .tgz        # Create folder.tgz, keep original"
+  echo "  pack --rm folder .zip   # Create archive and remove original"
+  echo "  pack -v 100mb folder .tgz    # Split into 100MB volumes"
   echo "  pack -s 3 folder .7z    # Split into 3 parts using 7z"
   exit 1
 fi
@@ -90,7 +95,9 @@ if [ ! -e "$TARGET" ]; then
 fi
 
 if [ -z "$FORMAT" ]; then
-  FORMAT=".tar.gz"
+  echo "Error: Format required. Specify extension (e.g., .tgz, .tar.gz, .zip)"
+  echo "Run 'pack --help' for supported formats"
+  exit 1
 fi
 
 FORMAT="${FORMAT#.}"
