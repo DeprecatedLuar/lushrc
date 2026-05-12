@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rec - unified recording: screen, desktop audio, mic
 
-STATE="/tmp/rec.state"
+STATE="${TMPDIR:-/tmp}/rec.state"
 OUT_DIR="${MEDIA:-$HOME/Media}/rec"
 LIBDIR="${LIBDIR:-$HOME/.config/lushrc/bin/lib}"
 # shellcheck source=bin/lib/rec/fix-color.sh

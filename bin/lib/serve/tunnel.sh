@@ -33,14 +33,14 @@ start_tunnel() {
   ensure_cloudflared || return 1
 
   # Temp file to capture the URL
-  url_file=$(mktemp /tmp/serve-tunnel-url.XXXXXX)
+  url_file=$(mktemp serve-tunnel-url.XXXXXX)
 
   # Start tunnel in background, capture output
   cloudflared tunnel --url "http://localhost:$port" > "$url_file" 2>&1 &
   tunnel_pid=$!
 
   # Store PID for cleanup
-  echo "$tunnel_pid" > /tmp/serve-tunnel.pid
+  echo "$tunnel_pid" > "${TMPDIR:-/tmp}/serve-tunnel.pid"
 
   # Wait for URL to appear (max 20 seconds)
   local waited=0
@@ -80,10 +80,11 @@ start_tunnel() {
 
 # Stop tunnel
 stop_tunnel() {
-  if [[ -f /tmp/serve-tunnel.pid ]]; then
+  local pid_file="${TMPDIR:-/tmp}/serve-tunnel.pid"
+  if [[ -f "$pid_file" ]]; then
     local pid
-    pid=$(cat /tmp/serve-tunnel.pid)
+    pid=$(cat "$pid_file")
     kill "$pid" 2>/dev/null || true
-    rm -f /tmp/serve-tunnel.pid
+    rm -f "$pid_file"
   fi
 }

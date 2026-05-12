@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-DOCK_DIR="/tmp/dock"
+DOCK_DIR="${TMPDIR:-/tmp}/dock"
 LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
 source "$LIBDIR/shared/net.sh"
 source "$LIBDIR/shared/spinner.sh"

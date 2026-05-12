@@ -2,7 +2,7 @@
 BIN="$HOME/.cache/caps-toggle"
 
 if [ ! -f "$BIN" ]; then
-    src=$(mktemp /tmp/caps_XXXXXX.go)
+    src=$(mktemp caps_XXXXXX.go)
     cat > "$src" << 'EOF'
 package main
 

@@ -295,7 +295,7 @@ convert_one() {
                 local AUDIO_INPUT="$INPUT"
                 local TEMP_WAV=""
                 if [ "$INPUT_EXT_LOWER" != "wav" ]; then
-                    TEMP_WAV="/tmp/tranz-$$.wav"
+                    TEMP_WAV="${TMPDIR:-/tmp}/tranz-$$.wav"
                     if ! ffmpeg -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$TEMP_WAV" -y >/dev/null 2>&1; then
                         echo "Error: Failed to convert audio to WAV" >&2
                         return 1

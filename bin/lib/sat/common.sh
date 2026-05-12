@@ -513,7 +513,7 @@ session_remove_tool() {
 cleanup_session() {
     local pid="$1"
     local session_dir="$SAT_SHELL_DIR/$pid"
-    local xdg_dir="/tmp/sat-$pid"
+    local xdg_dir="${TMPDIR:-/tmp}/sat-$pid"
 
     printf "${C_DIM}Cleaning orphaned session: $pid${C_RESET}\n"
 

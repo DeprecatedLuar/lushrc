@@ -84,7 +84,7 @@ if [[ $# -ge 2 ]]; then
 
         # Save undo data (only for moves)
         if [[ -z "$COPY_MODE" ]]; then
-            UNDO_DIR="/tmp/tx-undo-$USER"
+            UNDO_DIR="${TMPDIR:-/tmp}/tx-undo-$USER"
             mkdir -p "$UNDO_DIR"
             printf '%s\n' "${sources[@]}" > "$UNDO_DIR/sources"
             echo "$dest_resolved" > "$UNDO_DIR/dest"

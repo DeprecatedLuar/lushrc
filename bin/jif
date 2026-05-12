@@ -96,11 +96,11 @@ echo "Duration: ${DURATION_INT}s  Target: ≤${SIZE_CAP_MB}MB"
 
 #--[Parallel samples]---------------------------------------------------------
 
-TMP_BASE="/tmp/jif-base-$$.gif"
-TMP_FPS="/tmp/jif-fps-$$.gif"
-TMP_SCALE="/tmp/jif-scale-$$.gif"
-TMP_COLORS="/tmp/jif-colors-$$.gif"
-TMP_FULL="/tmp/jif-full-$$.gif"
+TMP_BASE="${TMPDIR:-/tmp}/jif-base-$$.gif"
+TMP_FPS="${TMPDIR:-/tmp}/jif-fps-$$.gif"
+TMP_SCALE="${TMPDIR:-/tmp}/jif-scale-$$.gif"
+TMP_COLORS="${TMPDIR:-/tmp}/jif-colors-$$.gif"
+TMP_FULL="${TMPDIR:-/tmp}/jif-full-$$.gif"
 trap 'rm -f "$TMP_BASE" "$TMP_FPS" "$TMP_SCALE" "$TMP_COLORS" "$TMP_FULL"' EXIT
 
 SDUR=$SAMPLE_SECS

@@ -2,7 +2,7 @@
 
 SESSION="hotline"
 INPUT_SCRIPT="${ROFI_INPUT_SCRIPT:-$HOME/.config/lushrc/bin/lib/input/input-text.sh}"
-HOTLINE_DIR="/tmp/hotline-$USER"
+HOTLINE_DIR="${TMPDIR:-/tmp}/hotline-$USER"
 HOTLINE_HISTORY="$HOTLINE_DIR/history"
 NOTIFY_TITLE="☎ Hotline"
 POLL_INTERVAL=0.1

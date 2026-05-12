@@ -2,7 +2,7 @@
 # wormhole - Nav-engine powered symlink wrapper
 
 if [[ "$1" == "kill" ]] || [[ "$1" == "close" ]]; then
-    rm -f /tmp/wormhole ~/wormhole ~/Downloads/wormhole ~/Workspace/wormhole ~/Desktop/wormhole
+    rm -f ${TMPDIR:-/tmp}/wormhole ~/wormhole ~/Downloads/wormhole ~/Workspace/wormhole ~/Desktop/wormhole
     exit 0
 fi
 
@@ -55,10 +55,10 @@ for wh_path in ~/wormhole ~/Downloads/wormhole ~/Workspace/wormhole ~/Desktop/wo
 done
 
 # Create wormholes - chain through /tmp so they auto-break on reboot
-ln -sfn "$target" /tmp/wormhole
-ln -sfn /tmp/wormhole ~/wormhole
-ln -sfn /tmp/wormhole ~/Downloads/wormhole
-ln -sfn /tmp/wormhole ~/Workspace/wormhole
-ln -sfn /tmp/wormhole ~/Desktop/wormhole
+ln -sfn "$target" ${TMPDIR:-/tmp}/wormhole
+ln -sfn ${TMPDIR:-/tmp}/wormhole ~/wormhole
+ln -sfn ${TMPDIR:-/tmp}/wormhole ~/Downloads/wormhole
+ln -sfn ${TMPDIR:-/tmp}/wormhole ~/Workspace/wormhole
+ln -sfn ${TMPDIR:-/tmp}/wormhole ~/Desktop/wormhole
 
 echo "$target"

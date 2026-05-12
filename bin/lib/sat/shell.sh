@@ -79,7 +79,7 @@ shell_cleanup() {
             local display=$(source_display "$src")
             local color=$(source_color "$display")
 
-            local err_file="/tmp/sat-cleanup-$$-$tool"
+            local err_file="${TMPDIR:-/tmp}/sat-cleanup-$$-$tool"
             pkg_remove "$tool" "$src" >"$err_file" 2>&1 &
             spin_probe "$tool" $!
             if wait $!; then
@@ -137,7 +137,7 @@ sat_shell() {
 
     mkdir -p "$session_dir"
 
-    local xdg_dir="/tmp/sat-$$"
+    local xdg_dir="${TMPDIR:-/tmp}/sat-$$"
     mkdir -p "$xdg_dir"/{config,data,cache,state}
 
     take_snapshot "$snapshot_before"

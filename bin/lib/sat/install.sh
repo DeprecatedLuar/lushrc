@@ -6,7 +6,7 @@
 # =============================================================================
 
 # Temp file for subshell communication
-_GH_RESULT_FILE="/tmp/sat-gh-result-$$"
+_GH_RESULT_FILE="${TMPDIR:-/tmp}/sat-gh-result-$$"
 
 # Write result to temp file (for subshell communication)
 _gh_set_result() {
@@ -245,7 +245,7 @@ try_source() {
     case "$source" in
         cargo)
             command -v cargo &>/dev/null || return 1
-            local err_file="/tmp/sat-cargo-err-$$"
+            local err_file="${TMPDIR:-/tmp}/sat-cargo-err-$$"
 
             if cargo install "$tool" 2>"$err_file"; then
                 rm -f "$err_file"
