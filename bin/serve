@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib/serve"
 TEMPLATE="$LIB_DIR/share.html"
 source "$SCRIPT_DIR/lib/shared/net.sh"
-SERVE_DIR=$(mktemp -d /tmp/serve.XXXXXX)
+SERVE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/serve.XXXXXX")
 
 # ── cleanup on exit ───────────────────────────────────────────────────────────
 cleanup() {
