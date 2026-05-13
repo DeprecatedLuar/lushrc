@@ -34,7 +34,9 @@ _copy() {
 _copy_file() {
     local file="$1"
     local mime
-    mime=$(file --mime-type -b "$file")
+    if command -v file &>/dev/null; then
+        mime=$(file --mime-type -b "$file")
+    fi
     _copy "$mime" < "$file"
 }
 
