@@ -190,9 +190,9 @@ case "${1:-}" in
         fi
         ;;
     big|bigpicture)
-        exec nvidia-offload steam -tenfoot
+        exec gamemoderun steam -tenfoot
         ;;
     *)
-        exec nvidia-offload steam
+        exec gamemoderun steam
         ;;
 esac

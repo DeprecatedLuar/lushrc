@@ -3,15 +3,28 @@
 metrics=("$@")
 [[ ${#metrics[@]} -eq 0 ]] && metrics=(cpu ram gpu fan bat)
 
+# Dependency check - warn about missing tools
+MISSING_DEPS=()
+command -v top &>/dev/null || MISSING_DEPS+=("top (install procps/procps-ng)")
+command -v free &>/dev/null || MISSING_DEPS+=("free (install procps/procps-ng)")
+command -v sensors &>/dev/null || MISSING_DEPS+=("sensors (install lm-sensors)")
+command -v lspci &>/dev/null || MISSING_DEPS+=("lspci (install pciutils)")
+
+if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
+    echo "Warning: Missing dependencies for full metrics:" >&2
+    printf "  - %s\n" "${MISSING_DEPS[@]}" >&2
+    echo >&2
+fi
+
 for metric in "${metrics[@]}"; do
     case "$metric" in
         cpu)
-            usage=$(top -bn2 -d1 | awk '
+            usage=$(LC_ALL=C top -bn2 -d1 | awk '
                 /^%Cpu/ {cpu=$2}
                 /^CPU:/ {gsub(/%/,"",$2); cpu=$2}
                 END {if(cpu) printf "%.0f", cpu}
             ')
-            temp=$(sensors 2>/dev/null | grep -E '^(Package id 0|Tctl|Core 0):' | head -1 | sed 's/^[^+]*+\([0-9.]*\).*/\1/')
+            temp=$(sensors 2>/dev/null | grep -E '^(Package id 0|Tctl|Core 0|temp1):' | head -1 | awk '{match($0, /\+([0-9.]+)/, a); print a[1]}')
             cur_freq=$(awk '{sum+=$1; count++} END {if(count>0) printf "%.1f", sum/count/1000000}' /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null)
             max_freq=$(awk '{print $1/1000000; exit}' /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
             freq_str=""
@@ -35,7 +48,7 @@ for metric in "${metrics[@]}"; do
             ;;
         ram)
             if [[ ${#metrics[@]} -eq 1 ]]; then
-                free -h | awk '/^Mem:/ {
+                LC_ALL=C free -h | awk '/^Mem:/ {
                     total=$2; used=$3; free=$4; available=$7
                     printf "RAM %.0f%% (%s / %s)\n", ($3/$2*100), used, total
                     printf "Used: %s | Free: %s | Available: %s\n", used, free, available
@@ -46,7 +59,7 @@ for metric in "${metrics[@]}"; do
                     printf "%.0f%% %s (%s)\n", $4, cmd, $2
                 }'
             else
-                free | awk '/^Mem:/ {printf "RAM %.0f%%\n", $3/$2*100}'
+                LC_ALL=C free | awk '/^Mem:/ {printf "RAM %.0f%%\n", $3/$2*100}'
             fi
             ;;
         gpu)
@@ -97,12 +110,26 @@ for metric in "${metrics[@]}"; do
                     else
                         [[ -n "$usage" && -n "$nv_temp" ]] && printf "dGPU %s%% (%s°C)\n" "$usage" "${nv_temp%%.*}"
                     fi
+                elif sensors 2>/dev/null | grep -q '^amdgpu-'; then
+                    # AMD GPU via sensors
+                    amd_temp=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^edge:/) {match($0, /\+([0-9.]+)/, t); print t[1]; exit}}')
+                    amd_usage=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^power1:/) {match($0, /([0-9.]+) W/, p); match($0, /cap = ([0-9.]+) W/, c); if(c[1]>0) print int(p[1]/c[1]*100); exit}}')
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        [[ -n "$amd_temp" ]] && printf "dGPU %s°C\n" "${amd_temp%%.*}" || printf "dGPU\n"
+                    else
+                        [[ -n "$amd_temp" && -n "$amd_usage" ]] && printf "dGPU %s%% (%s°C)\n" "$amd_usage" "${amd_temp%%.*}" || [[ -n "$amd_temp" ]] && printf "dGPU (%s°C)\n" "${amd_temp%%.*}"
+                    fi
                 fi
             elif command -v nvidia-smi &>/dev/null; then
                 # Single NVIDIA GPU (no hybrid)
                 usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
                 nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
                 [[ -n "$usage" && -n "$nv_temp" ]] && printf "GPU %s%% (%s°C)\n" "$usage" "${nv_temp%%.*}"
+            elif sensors 2>/dev/null | grep -q '^amdgpu-'; then
+                # Single AMD GPU (no hybrid)
+                amd_temp=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^edge:/) {match($0, /\+([0-9.]+)/, t); print t[1]; exit}}')
+                amd_usage=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^power1:/) {match($0, /([0-9.]+) W/, p); match($0, /cap = ([0-9.]+) W/, c); if(c[1]>0) print int(p[1]/c[1]*100); exit}}')
+                [[ -n "$amd_temp" && -n "$amd_usage" ]] && printf "GPU %s%% (%s°C)\n" "$amd_usage" "${amd_temp%%.*}" || [[ -n "$amd_temp" ]] && printf "GPU (%s°C)\n" "${amd_temp%%.*}"
             fi
             ;;
         igpu)

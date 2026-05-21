@@ -68,7 +68,7 @@ SSH_ARGS=()
 printf "Docking %s..." "$CONN_HOST"
 
 # --- Single SSH call: get home dir + hostname ---
-read -r REMOTE_HOME REMOTE_NAME < <(ssh "${SSH_ARGS[@]}" "$SSH_TARGET" 'echo $HOME $(hostname -s)' 2>/dev/null)
+read -r REMOTE_HOME REMOTE_NAME < <(ssh "${SSH_ARGS[@]}" "$SSH_TARGET" 'echo $HOME $(hostname -s)' 2>/dev/null | tail -1)
 
 if [[ -z "$REMOTE_HOME" ]]; then
     printf "\rCould not connect to %s\n" "$CONN_HOST"

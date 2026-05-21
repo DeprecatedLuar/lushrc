@@ -78,9 +78,10 @@ expand_index() {
         lb/*)  echo "$HOME/.local/bin/${1#lb/}" ;;
         d/*)   echo "$HOME/Downloads/${1#d/}" ;;
         doc/*) echo "$DOCUMENTS/${1#doc/}" ;;
-        med/*) echo "${MEDIA:-$HOME/Media}/${1#med/}" ;;
-        pic/*) echo "${MEDIA:-$HOME/Media}/${1#pic/}" ;;
-        vid/*) echo "${MEDIA:-$HOME/Media}/${1#vid/}" ;;
+        med/*|m/*|media/*) echo "${MEDIA:-$HOME/Media}/${1#*/}" ;;
+        pic/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures/${1#pic/}" ;;
+        vid/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos/${1#vid/}" ;;
+        wpp/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers/${1#wpp/}" ;;
         l/*)   echo "$HOME/.local/${1#l/}" ;;
         etc/*) echo "/etc/${1#etc/}" ;;
         w)     echo "$WORKSPACE" ;;
@@ -91,9 +92,10 @@ expand_index() {
         lb)    echo "$HOME/.local/bin" ;;
         d)     echo "$HOME/Downloads" ;;
         doc)   echo "$DOCUMENTS" ;;
-        med)   echo "${MEDIA:-$HOME/Media}" ;;
-        pic)   echo "${MEDIA:-$HOME/Media}" ;;
-        vid)   echo "${MEDIA:-$HOME/Media}" ;;
+        med|m|media) echo "${MEDIA:-$HOME/Media}" ;;
+        pic)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures" ;;
+        vid)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos" ;;
+        wpp)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers" ;;
         l)     echo "$HOME/.local" ;;
         etc)   echo "/etc" ;;
         *)     echo "$1" ;;

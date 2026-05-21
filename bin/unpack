@@ -11,6 +11,7 @@ check_dependency() {
 
 KEEP_ORIGINAL=true
 DEBUG=false
+FORCE=false
 
 while [[ "$1" == -* ]]; do
   case "$1" in
@@ -27,6 +28,10 @@ while [[ "$1" == -* ]]; do
       DEBUG=true
       shift
       ;;
+    -f|--force)
+      FORCE=true
+      shift
+      ;;
     *)
       echo "Error: Unknown option: $1"
       exit 1
@@ -35,8 +40,9 @@ while [[ "$1" == -* ]]; do
 done
 
 if [ -z "$1" ]; then
-  echo "Usage: unpack [--rm] [--debug] <archive_file>"
+  echo "Usage: unpack [--rm] [-f] [--debug] <archive_file>"
   echo "  --rm, --remove  Remove original archive after unpacking"
+  echo "  -f, --force     Overwrite existing files/folders"
   echo "  --debug         Show debug information"
   exit 1
 fi
@@ -96,23 +102,11 @@ TEMP_EXTRACT_DIR=$(mktemp -d)
 TEMP_ARCHIVE=""
 UNPACK_PID=""
 SUCCESS=false
-DEST_FOLDER=""
-DEST_CREATED=false
 
 cleanup() {
     if [ -n "$UNPACK_PID" ] && kill -0 $UNPACK_PID 2>/dev/null; then
         kill $UNPACK_PID 2>/dev/null
         wait $UNPACK_PID 2>/dev/null
-    fi
-
-    if [ "$SUCCESS" = false ]; then
-        if [ "$DEST_CREATED" = true ] && [ -n "$DEST_FOLDER" ] && [ -d "$DEST_FOLDER" ]; then
-            rm -rf "$DEST_FOLDER"
-        fi
-
-        if [ "$KEEP_ORIGINAL" = false ] && [ -n "$TEMP_ARCHIVE" ] && [ -e "$TEMP_ARCHIVE" ]; then
-            mv "$TEMP_ARCHIVE" "$ORIGINAL_DIR/" 2>/dev/null
-        fi
     fi
 
     if [ -n "$TEMP_ARCHIVE_DIR" ] && [ -d "$TEMP_ARCHIVE_DIR" ]; then
@@ -125,19 +119,6 @@ cleanup() {
 }
 
 trap cleanup INT TERM EXIT
-
-if [ "$KEEP_ORIGINAL" = false ] && [ "$IS_SPLIT" = false ]; then
-    TEMP_ARCHIVE_DIR=$(mktemp -d)
-    TEMP_ARCHIVE="$TEMP_ARCHIVE_DIR/$ARCHIVE_NAME"
-    mv "$ARCHIVE" "$TEMP_ARCHIVE"
-    ARCHIVE="$TEMP_ARCHIVE"
-
-    DEST_FOLDER="$ORIGINAL_DIR/$BASE_NAME"
-    if [ ! -e "$DEST_FOLDER" ]; then
-        mkdir -p "$DEST_FOLDER"
-        DEST_CREATED=true
-    fi
-fi
 
 printf "Unpacking"
 
@@ -187,7 +168,11 @@ if [ "$IS_SPLIT" = false ]; then
     ;;
   *.zip|*.bacpac|*.kra)
     check_dependency "unzip"
-    unzip -q "$ARCHIVE" -d "$TEMP_EXTRACT_DIR" &
+    if [ "$FORCE" = true ]; then
+      unzip -qo "$ARCHIVE" -d "$TEMP_EXTRACT_DIR" &
+    else
+      unzip -q "$ARCHIVE" -d "$TEMP_EXTRACT_DIR" &
+    fi
     ;;
   *.7z|*.iso)
     check_dependency "7z"
@@ -245,29 +230,42 @@ if [ $UNPACK_EXIT -ne 0 ]; then
     exit 1
 fi
 
-if [ "$DEST_CREATED" = true ]; then
-    shopt -s dotglob nullglob
-    EXTRACTED_ITEMS=("$TEMP_EXTRACT_DIR"/*)
-    shopt -u dotglob nullglob
+shopt -s dotglob nullglob
+EXTRACTED_ITEMS=("$TEMP_EXTRACT_DIR"/*)
+shopt -u dotglob nullglob
 
-    if [ ${#EXTRACTED_ITEMS[@]} -eq 1 ] && [ -d "${EXTRACTED_ITEMS[0]}" ]; then
-        mv "${EXTRACTED_ITEMS[0]}"/* "$DEST_FOLDER/" 2>/dev/null
-        [ -d "${EXTRACTED_ITEMS[0]}" ] && rmdir "${EXTRACTED_ITEMS[0]}" 2>/dev/null
-    else
-        mv "$TEMP_EXTRACT_DIR"/* "$DEST_FOLDER/" 2>/dev/null
-    fi
+FINAL_DEST=""
+if [ ${#EXTRACTED_ITEMS[@]} -eq 1 ]; then
+    ITEM_NAME=$(basename "${EXTRACTED_ITEMS[0]}")
+    FINAL_DEST="$ORIGINAL_DIR/$ITEM_NAME"
 else
-    mv "$TEMP_EXTRACT_DIR"/* "$ORIGINAL_DIR/" 2>/dev/null || {
-        shopt -s dotglob
-        mv "$TEMP_EXTRACT_DIR"/* "$ORIGINAL_DIR/" 2>/dev/null
-        shopt -u dotglob
-    }
+    FINAL_DEST="$ORIGINAL_DIR/$BASE_NAME"
+fi
+
+if [ -e "$FINAL_DEST" ] && [ "$FORCE" = false ]; then
+    printf "\rError: '%s' already exists. Use -f to overwrite.\n" "$(basename "$FINAL_DEST")"
+    exit 1
+fi
+
+if [ -e "$FINAL_DEST" ] && [ "$FORCE" = true ]; then
+    rm -rf "$FINAL_DEST"
+fi
+
+if [ ${#EXTRACTED_ITEMS[@]} -eq 1 ]; then
+    mv "${EXTRACTED_ITEMS[0]}" "$ORIGINAL_DIR/"
+else
+    mkdir -p "$FINAL_DEST"
+    mv "$TEMP_EXTRACT_DIR"/* "$FINAL_DEST/"
 fi
 
 SUCCESS=true
+
+if [ "$KEEP_ORIGINAL" = false ]; then
+    rm -f "$ARCHIVE"
+fi
 
 if [ "$IS_SPLIT" = true ] && [ "$KEEP_ORIGINAL" = false ]; then
     rm -f $SPLIT_PATTERN
 fi
 
-printf "\rDone          \n"
+printf "\rExtracted to: %s\n" "$(basename "$FINAL_DEST")"
