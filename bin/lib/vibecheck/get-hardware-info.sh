@@ -22,15 +22,15 @@ for component in "${components[@]}"; do
             fi
             ;;
         cpu)
-            model=$(lscpu | awk -F: '/Model name/ {gsub(/^[ \t]+/, "", $2); print $2}')
-            cores=$(lscpu | awk -F: '/^Core\(s\) per socket/ {gsub(/^[ \t]+/, "", $2); print $2}')
-            threads=$(lscpu | awk -F: '/^CPU\(s\):/ {gsub(/^[ \t]+/, "", $2); print $2}')
-            freq=$(lscpu | awk -F: '/CPU max MHz/ {gsub(/^[ \t]+/, "", $2); printf "%.1f", $2/1000}')
-            [[ -z "$freq" ]] && freq=$(lscpu | awk -F: '/CPU MHz/ {gsub(/^[ \t]+/, "", $2); printf "%.1f", $2/1000}')
+            model=$(LC_ALL=C lscpu | awk -F: '/Model name/ {gsub(/^[ \t]+/, "", $2); print $2}')
+            cores=$(LC_ALL=C lscpu | awk -F: '/^Core\(s\) per socket/ {gsub(/^[ \t]+/, "", $2); print $2}')
+            threads=$(LC_ALL=C lscpu | awk -F: '/^CPU\(s\):/ {gsub(/^[ \t]+/, "", $2); print $2}')
+            freq=$(LC_ALL=C lscpu | awk -F: '/CPU max MHz/ {gsub(/^[ \t]+/, "", $2); printf "%.1f", $2/1000}')
+            [[ -z "$freq" ]] && freq=$(LC_ALL=C lscpu | awk -F: '/CPU MHz/ {gsub(/^[ \t]+/, "", $2); printf "%.1f", $2/1000}')
             [[ -n "$model" ]] && printf "CPU: %s (%s cores / %s threads @ %sGHz)\n" "$model" "$cores" "$threads" "$freq"
             ;;
         ram)
-            total=$(free -h | awk '/^Mem:/ {print $2}')
+            total=$(LC_ALL=C free -h | awk '/^Mem:/ {print $2}')
             # Try to get RAM type/speed (works without sudo on some systems)
             speed=$(cat /sys/devices/system/memory/*/speed 2>/dev/null | head -1)
             if [[ -n "$speed" ]]; then
