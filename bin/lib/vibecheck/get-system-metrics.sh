@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 
-metrics=("$@")
+# Parse flags
+show_all=false
+metrics=()
+for arg in "$@"; do
+    if [[ "$arg" == "--all" ]]; then
+        show_all=true
+    else
+        metrics+=("$arg")
+    fi
+done
 [[ ${#metrics[@]} -eq 0 ]] && metrics=(cpu ram gpu fan bat)
 
 # Dependency check - warn about missing tools
@@ -54,10 +63,25 @@ for metric in "${metrics[@]}"; do
                     printf "Used: %s | Free: %s | Available: %s\n", used, free, available
                 }' RS='\n' FS='[[:space:]]+'
                 echo ""
-                ps aux --sort=-%mem | awk 'NR>1 && $4>4 {
-                    cmd=$11; gsub(/^.*\//, "", cmd)
-                    printf "%.0f%% %s (%s)\n", $4, cmd, $2
-                }'
+
+                if [[ "$show_all" == true ]]; then
+                    # Show all processes
+                    ps aux --sort=-%mem | awk 'NR>1 && $4>0 {
+                        cmd=$11; gsub(/^.*\//, "", cmd)
+                        printf "%.1f%% %s (%s)\n", $4, cmd, $2
+                    }'
+                else
+                    # Show processes >1%
+                    ps aux --sort=-%mem | awk 'NR>1 && $4>1 {
+                        cmd=$11; gsub(/^.*\//, "", cmd)
+                        printf "%.0f%% %s (%s)\n", $4, cmd, $2
+                    }'
+
+                    # Add background summary
+                    ps aux --no-headers | awk '$4<=1 && $4>0 {sum+=$4; count++} END {
+                        if(count>0) printf "\n%.0f%% background (%d processes)\n", sum, count
+                    }'
+                fi
             else
                 LC_ALL=C free | awk '/^Mem:/ {printf "RAM %.0f%%\n", $3/$2*100}'
             fi

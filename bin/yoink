@@ -80,6 +80,9 @@ CONN_HOST=$(expand_local_ip "$CONN_HOST") || exit 1
 REMOTE_PATH_QUERY="${2:-~}"
 LOCAL_DEST="${3:-.}"
 
+# Normalize local home references to tilde for remote resolution
+REMOTE_PATH_QUERY="${REMOTE_PATH_QUERY/#$HOME/\~}"
+
 SSH_ARGS=()
 [[ -n "$CONN_PORT" ]] && SSH_ARGS+=("-p" "$CONN_PORT")
 [[ -n "$CONN_USER" ]] && SSH_TARGET="$CONN_USER@$CONN_HOST" || SSH_TARGET="$CONN_HOST"

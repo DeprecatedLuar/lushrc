@@ -67,6 +67,9 @@ SSH_ARGS=()
 
 printf "Docking %s..." "$CONN_HOST"
 
+# Normalize local home references to tilde for remote resolution
+[[ -n "$REMOTE_PATH" ]] && REMOTE_PATH="${REMOTE_PATH/#$HOME/\~}"
+
 # --- Single SSH call: get home dir + hostname ---
 read -r REMOTE_HOME REMOTE_NAME < <(ssh "${SSH_ARGS[@]}" "$SSH_TARGET" 'echo $HOME $(hostname -s)' 2>/dev/null | tail -1)
 
