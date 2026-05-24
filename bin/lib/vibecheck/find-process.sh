@@ -27,11 +27,7 @@ else
         exit 1
     fi
 
-    pids=$(pgrep -i "$name" 2>/dev/null || pgrep "$name")
-
-    if [[ -z "$pids" ]]; then
-        pids=$(pgrep -f "$name")
-    fi
+    pids=$(pgrep -i "$name")
 
     if [[ -z "$pids" ]]; then
         pids=$(ps -eo pid,comm --no-headers | fzf --filter="$name" -1 | awk '{print $1}')
@@ -39,8 +35,8 @@ else
 
     if [[ -n "$pids" ]]; then
         echo "$pids" | while read -r pid; do
-            args=$(ps -p "$pid" -o args= 2>/dev/null || ps -o pid,args | awk -v p=$pid "\$1 == p {for(i=2;i<=NF;i++) printf \"%s \", \$i; print \"\"}")
-            [[ -n "$args" ]] && echo "$args"
+            comm=$(ps -p "$pid" -o comm= 2>/dev/null)
+            [[ -n "$comm" ]] && echo "$comm ($pid)"
         done
     fi
 
