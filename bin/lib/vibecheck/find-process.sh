@@ -35,7 +35,7 @@ else
 
     if [[ -n "$pids" ]]; then
         echo "$pids" | while read -r pid; do
-            comm=$(ps -p "$pid" -o comm= 2>/dev/null)
+            comm=$(ps -p "$pid" -o comm= 2>/dev/null || ps -o pid,comm | awk "\$1 == $pid {print \$2}")
             [[ -n "$comm" ]] && echo "$comm ($pid)"
         done
     fi
