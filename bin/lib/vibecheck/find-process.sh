@@ -27,7 +27,11 @@ else
         exit 1
     fi
 
-    pids=$(pgrep -if "$name" 2>/dev/null || pgrep -f "$name")
+    pids=$(pgrep -i "$name" 2>/dev/null || pgrep "$name")
+
+    if [[ -z "$pids" ]]; then
+        pids=$(pgrep -f "$name")
+    fi
 
     if [[ -z "$pids" ]]; then
         pids=$(ps -eo pid,comm --no-headers | fzf --filter="$name" -1 | awk '{print $1}')
