@@ -39,8 +39,8 @@ else
 
     if [[ -n "$pids" ]]; then
         echo "$pids" | while read -r pid; do
-            comm=$(ps -p "$pid" -o comm= 2>/dev/null || ps -o pid,comm | awk "\$1 == $pid {print \$2}")
-            [[ -n "$comm" ]] && echo "$comm ($pid)"
+            args=$(ps -p "$pid" -o args= 2>/dev/null || ps -o pid,args | awk -v p=$pid "\$1 == p {for(i=2;i<=NF;i++) printf \"%s \", \$i; print \"\"}")
+            [[ -n "$args" ]] && echo "$args"
         done
     fi
 
