@@ -27,8 +27,21 @@ else
         exit 1
     fi
 
+    # Try process name first (fast)
     pids=$(pgrep -i "$name")
 
+    # Fallback to full command line search (exclude self and search processes)
+    if [[ -z "$pids" ]]; then
+        pids=$(pgrep -f "$name" | while read -r pid; do
+            cmd=$(ps -p "$pid" -o args= 2>/dev/null)
+            # Filter out vch/find-process.sh/pgrep search commands
+            if [[ ! "$cmd" =~ (vch|find-process\.sh|pgrep).*"$name" ]]; then
+                echo "$pid"
+            fi
+        done)
+    fi
+
+    # Keep fzf fallback for edge cases
     if [[ -z "$pids" ]]; then
         pids=$(ps -eo pid,comm --no-headers | fzf --filter="$name" -1 | awk '{print $1}')
     fi
@@ -36,7 +49,14 @@ else
     if [[ -n "$pids" ]]; then
         echo "$pids" | while read -r pid; do
             comm=$(ps -p "$pid" -o comm= 2>/dev/null)
-            [[ -n "$comm" ]] && echo "$comm ($pid)"
+
+            # If it's a script wrapper, extract the script name
+            if [[ "$comm" =~ ^(bash|sh|python|python3|node|ruby|perl)$ ]]; then
+                script=$(ps -p "$pid" -o args= 2>/dev/null | awk '{print $2}' | xargs basename)
+                [[ -n "$script" ]] && echo "$script [$comm] ($pid)" || echo "$comm ($pid)"
+            else
+                [[ -n "$comm" ]] && echo "$comm ($pid)"
+            fi
         done
     fi
 
