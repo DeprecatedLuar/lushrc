@@ -7,7 +7,8 @@ case "${1:-}" in
         "$LIB_DIR/list-tray-apps.sh"
         ;;
     ports)
-        "$LIB_DIR/list-ports.sh"
+        shift
+        "$LIB_DIR/list-ports.sh" "$@"
         ;;
     port)
         "$LIB_DIR/get-port-process.sh" "$2"

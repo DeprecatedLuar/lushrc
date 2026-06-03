@@ -86,7 +86,11 @@ MOUNT_PATH="${REMOTE_PATH:-$REMOTE_HOME}"
 
 # Name: hostname[-subdir] or sanitized IP as fallback
 REMOTE_NAME="${REMOTE_NAME:-${CONN_HOST//./_}}"
-SUBDIR="${REMOTE_PATH:+"-$(basename "$MOUNT_PATH")"}"
+if [[ "$MOUNT_PATH" == "/" ]]; then
+    SUBDIR="-root"
+else
+    SUBDIR="${REMOTE_PATH:+"-$(basename "$MOUNT_PATH")"}"
+fi
 MOUNT_NAME="${REMOTE_NAME}${SUBDIR}"
 MOUNT_POINT="$DOCK_DIR/$MOUNT_NAME"
 SYMLINK="$HOME/$MOUNT_NAME"
