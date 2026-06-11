@@ -84,6 +84,21 @@ expand_index() {
         wpp/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers/${1#wpp/}" ;;
         l/*)   echo "$HOME/.local/${1#l/}" ;;
         etc/*) echo "/etc/${1#etc/}" ;;
+        ssh/*) echo "$HOME/.ssh/${1#ssh/}" ;;
+        back/*) echo "$BACKUP/${1#back/}" ;;
+        # Root directories
+        var/*) echo "/var/${1#var/}" ;;
+        usr/*) echo "/usr/${1#usr/}" ;;
+        opt/*) echo "/opt/${1#opt/}" ;;
+        tmp/*) echo "/tmp/${1#tmp/}" ;;
+        home/*) echo "/home/${1#home/}" ;;
+        srv/*) echo "/srv/${1#srv/}" ;;
+        boot/*) echo "/boot/${1#boot/}" ;;
+        mnt/*) echo "/mnt/${1#mnt/}" ;;
+        root/*) echo "/root/${1#root/}" ;;
+        bin/*) echo "/bin/${1#bin/}" ;;
+        sbin/*) echo "/sbin/${1#sbin/}" ;;
+        lib/*) echo "/lib/${1#lib/}" ;;
         w)     echo "$WORKSPACE" ;;
         t)     echo "$TOOLS" ;;
         c)     echo "$HOME/.config" ;;
@@ -98,6 +113,21 @@ expand_index() {
         wpp)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers" ;;
         l)     echo "$HOME/.local" ;;
         etc)   echo "/etc" ;;
+        ssh)   echo "$HOME/.ssh" ;;
+        back)  echo "$BACKUP" ;;
+        # Root directories
+        var)   echo "/var" ;;
+        usr)   echo "/usr" ;;
+        opt)   echo "/opt" ;;
+        tmp)   echo "/tmp" ;;
+        home)  echo "/home" ;;
+        srv)   echo "/srv" ;;
+        boot)  echo "/boot" ;;
+        mnt)   echo "/mnt" ;;
+        root)  echo "/root" ;;
+        bin)   echo "/bin" ;;
+        sbin)  echo "/sbin" ;;
+        lib)   echo "/lib" ;;
         *)     echo "$1" ;;
     esac
 }
