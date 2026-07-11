@@ -173,6 +173,21 @@ sync_wallpapers_gallery() {
 
 sync_wallpapers_gallery
 
+#--[LATEST SCREENSHOT]---------------------------
+
+sync_latest_screenshot() {
+    local screenshot_src="$MEDIA/screenshots/latest.png"
+    [ -f "$screenshot_src" ] || return 0
+
+    # Link to media root for quick access
+    ln -sf "$screenshot_src" "$MEDIA/screenshot.png"
+
+    # Link to pictures gallery
+    [ -d "$PICTURES_GALLERY" ] && ln -sf "$screenshot_src" "$PICTURES_GALLERY/latest-screenshot.png"
+}
+
+sync_latest_screenshot
+
 #--[WORKSPACE ↔ MEDIA CROSSLINKS]---------------
 
 sync_workspace_media() {

@@ -45,18 +45,20 @@ done
 # Validate arguments
 if [ "$#" -lt 2 ]; then
     echo "Usage: squish [--rm] [-f|--force] [--debug] [-j|--parallel [N]] <input_file...> <target_size>"
-    echo "  --rm              Remove original after optimization"
-    echo "  -f, --force       Overwrite existing output files"
+    echo "  --rm              Remove unsquished backup after optimization"
+    echo "  -f, --force       Overwrite existing unsquished backups"
     echo "  --debug           Show binary search iterations"
     echo "  -j, --parallel [N]  Process N images in parallel (default: 4, use 1 for sequential)"
+    echo ""
+    echo "Behavior: Originals moved to unsquished/, squished versions replace them in-place"
     echo ""
     echo "Target size examples: 50k, 100kb, 1m, 200 (assumes kb)"
     echo ""
     echo "Examples:"
-    echo "  squish image.webp 50k             # Optimize to ~50KB"
+    echo "  squish image.webp 50k             # Optimize to ~50KB, backup to unsquished/"
     echo "  squish *.webp 40k                 # Batch optimize all to ~40KB"
-    echo "  squish --rm photo.jpg 100k        # Optimize and remove original"
-    echo "  squish -f *.png 50k               # Force overwrite existing outputs"
+    echo "  squish --rm photo.jpg 100k        # Optimize and delete unsquished backup"
+    echo "  squish -f *.png 50k               # Force overwrite existing unsquished backups"
     exit 1
 fi
 
@@ -111,45 +113,54 @@ optimize_one() {
         return 1
     fi
 
-    # Generate output path: same filename in squished/ subfolder
+    # Generate paths: move original to unsquished/, output to original location
     local DIR=$(dirname "$INPUT")
     local FILENAME=$(basename "$INPUT")
-    local OUTPUT_DIR="$DIR/squished"
-    local OUTPUT="$OUTPUT_DIR/$FILENAME"
+    local UNSQUISHED_DIR="$DIR/unsquished"
+    local UNSQUISHED_FILE="$UNSQUISHED_DIR/$FILENAME"
+    local OUTPUT="$INPUT"  # Replace original with squished version
 
-    # Create output directory if needed
-    mkdir -p "$OUTPUT_DIR"
+    # Create unsquished directory if needed
+    mkdir -p "$UNSQUISHED_DIR"
 
-    # Check if output exists
-    if [ -f "$OUTPUT" ] && [ "$FORCE_OVERWRITE" = false ]; then
-        echo "Warning: Output already exists, skipping: $OUTPUT"
+    # Check if unsquished backup already exists
+    if [ -f "$UNSQUISHED_FILE" ] && [ "$FORCE_OVERWRITE" = false ]; then
+        echo "Warning: Unsquished backup already exists, skipping: $UNSQUISHED_FILE"
+        return 1
+    fi
+
+    # Move original to unsquished/ before processing
+    if ! mv "$INPUT" "$UNSQUISHED_FILE"; then
+        echo "Error: Failed to move original to unsquished/"
         return 1
     fi
 
     # Get input size for reference
-    local INPUT_SIZE_BYTES=$(stat -c%s "$INPUT" 2>/dev/null || stat -f%z "$INPUT" 2>/dev/null)
+    local INPUT_SIZE_BYTES=$(stat -c%s "$UNSQUISHED_FILE" 2>/dev/null || stat -f%z "$UNSQUISHED_FILE" 2>/dev/null)
     local INPUT_SIZE_KB=$((INPUT_SIZE_BYTES / 1024))
 
-    # If already smaller than target, just copy
+    # If already smaller than target, just copy back
     if [ "$INPUT_SIZE_KB" -le "$TARGET_KB" ]; then
-        cp "$INPUT" "$OUTPUT"
-        printf "Skipped: %s (already %dkb ≤ %dkb)\n" "$(basename "$INPUT")" "$INPUT_SIZE_KB" "$TARGET_KB"
+        cp "$UNSQUISHED_FILE" "$OUTPUT"
+        printf "Skipped: %s (already %dkb ≤ %dkb)\n" "$(basename "$OUTPUT")" "$INPUT_SIZE_KB" "$TARGET_KB"
+        [ "$KEEP_ORIGINAL" = false ] && rm "$UNSQUISHED_FILE"
         return 0
     fi
 
     [ "$DEBUG" = true ] && echo "Starting optimization: %dkb → %dkb" "$INPUT_SIZE_KB" "$TARGET_KB"
-    printf "Squishing %s (%dkb → %dkb)" "$(basename "$INPUT")" "$INPUT_SIZE_KB" "$TARGET_KB"
+    printf "Squishing %s (%dkb → %dkb)" "$(basename "$OUTPUT")" "$INPUT_SIZE_KB" "$TARGET_KB"
 
     # Try quality 0 first to check if resize is needed
     local BEST_Q=0
     local BEST_SIZE=999999
     local BEST_FILE=""
-    local UNIQUE_ID="$$$(basename "$INPUT" | tr -dc 'a-zA-Z0-9')"
+    local UNIQUE_ID="$$$(basename "$OUTPUT" | tr -dc 'a-zA-Z0-9')"
     local TEMP="${TMPDIR:-/tmp}/squish.$UNIQUE_ID.q0.webp"
 
-    if ! cwebp -q 0 "$INPUT" -o "$TEMP" >/dev/null 2>&1; then
-        printf "\rFailed: %s (encoding error at q=0)\n" "$(basename "$INPUT")"
+    if ! cwebp -q 0 "$UNSQUISHED_FILE" -o "$TEMP" >/dev/null 2>&1; then
+        printf "\rFailed: %s (encoding error at q=0)\n" "$(basename "$OUTPUT")"
         rm -f "$TEMP"
+        mv "$UNSQUISHED_FILE" "$OUTPUT"  # Restore original on failure
         return 1
     fi
 
@@ -179,9 +190,10 @@ optimize_one() {
         local Q=$(( (MIN_Q + MAX_Q) / 2 ))
         local TEMP="${TMPDIR:-/tmp}/squish.$UNIQUE_ID.$Q.webp"
 
-        if ! cwebp -q "$Q" "$INPUT" -o "$TEMP" >/dev/null 2>&1; then
-            printf "\rFailed: %s (encoding error at q=%d)\n" "$(basename "$INPUT")" "$Q"
+        if ! cwebp -q "$Q" "$UNSQUISHED_FILE" -o "$TEMP" >/dev/null 2>&1; then
+            printf "\rFailed: %s (encoding error at q=%d)\n" "$(basename "$OUTPUT")" "$Q"
             rm -f "$TEMP" "$BEST_FILE"
+            mv "$UNSQUISHED_FILE" "$OUTPUT"  # Restore original on failure
             return 1
         fi
 
@@ -216,7 +228,7 @@ optimize_one() {
         fi
 
             if [ "$DEBUG" = false ]; then
-                printf "\rSquishing %s (q=%d, %dkb)" "$(basename "$INPUT")" "$Q" "$SIZE_KB"
+                printf "\rSquishing %s (q=%d, %dkb)" "$(basename "$OUTPUT")" "$Q" "$SIZE_KB"
             fi
         done
         [ "$DEBUG" = true ] && echo ""
@@ -227,8 +239,8 @@ optimize_one() {
         [ "$DEBUG" = true ] && echo "Target unachievable at full size, binary searching resize scale..."
 
         # Get image dimensions
-        local WIDTH=$(identify -format "%w" "$INPUT" 2>/dev/null)
-        local HEIGHT=$(identify -format "%h" "$INPUT" 2>/dev/null)
+        local WIDTH=$(identify -format "%w" "$UNSQUISHED_FILE" 2>/dev/null)
+        local HEIGHT=$(identify -format "%h" "$UNSQUISHED_FILE" 2>/dev/null)
 
         if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
             [ "$DEBUG" = true ] && echo "  Could not get image dimensions"
@@ -245,7 +257,7 @@ optimize_one() {
                 local NEW_HEIGHT=$((HEIGHT * SCALE / 100))
                 local TEMP="${TMPDIR:-/tmp}/squish.$UNIQUE_ID.$SCALE.webp"
 
-                if ! cwebp -resize "$NEW_WIDTH" "$NEW_HEIGHT" -q 75 "$INPUT" -o "$TEMP" >/dev/null 2>&1; then
+                if ! cwebp -resize "$NEW_WIDTH" "$NEW_HEIGHT" -q 75 "$UNSQUISHED_FILE" -o "$TEMP" >/dev/null 2>&1; then
                     [ "$DEBUG" = true ] && echo "  Resize failed at ${SCALE}%"
                     rm -f "$TEMP"
                     break
@@ -297,14 +309,15 @@ optimize_one() {
         local DIFF=$((BEST_SIZE - TARGET_KB))
         local SIGN=""
         [ "$DIFF" -gt 0 ] && SIGN="+"
-        printf "\rDone: %s → squished/%s (q=%d, %dkb, %s%dkb)\n" \
-            "$(basename "$INPUT")" "$(basename "$OUTPUT")" "$BEST_Q" "$BEST_SIZE" "$SIGN" "$DIFF"
+        printf "\rDone: %s (q=%d, %dkb, %s%dkb) [original → unsquished/]\n" \
+            "$(basename "$OUTPUT")" "$BEST_Q" "$BEST_SIZE" "$SIGN" "$DIFF"
 
-        [ "$KEEP_ORIGINAL" = false ] && rm "$INPUT"
+        [ "$KEEP_ORIGINAL" = false ] && rm "$UNSQUISHED_FILE"
         return 0
     else
-        printf "\rFailed: %s (no valid output)\n" "$(basename "$INPUT")"
+        printf "\rFailed: %s (no valid output)\n" "$(basename "$OUTPUT")"
         rm -f "$BEST_FILE"
+        mv "$UNSQUISHED_FILE" "$OUTPUT"  # Restore original on failure
         return 1
     fi
 }

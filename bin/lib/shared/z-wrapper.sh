@@ -33,8 +33,8 @@ if [[ "$1" == "-" ]]; then
     return
 fi
 
-# Resolve path using nav-engine
-target="$($LIBDIR/shared/nav-engine.sh "${flags[@]}" "$1" 2>&1)"
+# Resolve path using nav-engine (suppress its error output)
+target="$($LIBDIR/shared/nav-engine.sh "${flags[@]}" "$1" 2>/dev/null)"
 
 # Check if nav-engine succeeded
 if [[ $? -eq 0 ]]; then
@@ -46,7 +46,7 @@ if [[ $? -eq 0 ]]; then
         cd "$target"
     fi
 else
-    # Print nav-engine's error message
-    echo "$target" >&2
+    # Simple error message
+    echo "$1 not found" >&2
     return 1
 fi

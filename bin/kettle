@@ -1,8 +1,40 @@
 #!/usr/bin/env bash
 # kettle - Steam game launcher with auto-generated wrapper scripts
 
+#--[Configuration]-----------------------------------------------------------
+
 WRAPPER_DIR="$HOME/.local/share/kettle/wrappers"
 SYMLINK_DIR="$HOME/.local/bin"
+
+# Manifest names to skip when listing games (glob patterns)
+EXCLUDED_NAME_PATTERNS=(
+    "Steam Linux Runtime*"
+    "Proton*"
+    "Steamworks Common Redistributables"
+)
+
+# Custom (sideloaded, non-Steam) games — launched via umu-run + Proton
+CUSTOM_REGISTRY="$HOME/.local/share/kettle/custom_games.json"
+CUSTOM_PREFIX_DIR="$HOME/.local/share/kettle/prefixes"
+CUSTOM_WRAPPER_DIR="$HOME/.local/share/kettle/custom_wrappers"
+CUSTOM_GAME_DEPS=(jq steam-run umu-run)
+
+#--[Dependencies]--------------------------------------------------------------
+
+# Verify required binaries are on PATH; exit with one clear error if not
+check_deps() {
+    local dep missing=()
+    for dep in "$@"; do
+        command -v "$dep" >/dev/null 2>&1 || missing+=("$dep")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Error: missing required dependencies: ${missing[*]}" >&2
+        echo "Install them (e.g. add to NixOS systemPackages) and try again." >&2
+        exit 1
+    fi
+}
+
+#--[Steam Detection]---------------------------------------------------------
 
 # Auto-detect Steam installation
 detect_steam_root() {
@@ -25,6 +57,32 @@ if [[ -z "$STEAM_ROOT" ]] || [[ ! -d "$STEAM_ROOT/steamapps" ]]; then
     exit 1
 fi
 
+# Proton build for custom (non-Steam) games — reuses whatever Proton Steam
+# already manages, so custom games don't depend on a separate launcher
+detect_proton_path() {
+    local dir
+    for dir in "$STEAM_ROOT/compatibilitytools.d"/UMU-Proton* "$STEAM_ROOT/compatibilitytools.d"/GE-Proton*; do
+        [[ -d "$dir" ]] && { echo "$dir"; return 0; }
+    done
+    for dir in "$STEAM_ROOT/steamapps/common"/Proton\ -\ Experimental "$STEAM_ROOT/steamapps/common"/Proton\ */; do
+        [[ -d "$dir" ]] && { echo "${dir%/}"; return 0; }
+    done
+    return 1
+}
+
+PROTON_PATH="${PROTON_PATH:-$(detect_proton_path)}"
+
+#--[Game Listing]-------------------------------------------------------------
+
+# Skip runtime/tool manifests per EXCLUDED_NAME_PATTERNS
+is_excluded_name() {
+    local name="$1" pattern
+    for pattern in "${EXCLUDED_NAME_PATTERNS[@]}"; do
+        [[ "$name" == $pattern ]] && return 0
+    done
+    return 1
+}
+
 # Parse game info from manifest files
 list_games() {
     local appid name
@@ -34,16 +92,18 @@ list_games() {
         appid=$(grep -m1 '"appid"' "$manifest" | sed 's/.*"appid"[[:space:]]*"\([0-9]*\)"/\1/')
         name=$(grep -m1 '"name"' "$manifest" | sed 's/.*"name"[[:space:]]*"\(.*\)"/\1/')
 
-        # Skip runtime/tools
-        case "$name" in
-            "Steam Linux Runtime"*|"Proton"*|"Steamworks Common Redistributables")
-                continue
-                ;;
-        esac
+        if [[ -z "$appid" ]] || [[ -z "$name" ]]; then
+            echo "Warning: skipping malformed manifest: $manifest" >&2
+            continue
+        fi
+
+        is_excluded_name "$name" && continue
 
         echo "$appid|$name"
     done | sort -t'|' -k2
 }
+
+#--[Name Transforms]----------------------------------------------------------
 
 # Generate initials from name (returns empty if single-char)
 get_initials() {
@@ -61,6 +121,8 @@ get_slug() {
     echo "$name" | tr -d "'" | tr '[:upper:]' '[:lower:]' | sed "s/[^a-z0-9]/-/g" | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//'
 }
 
+#--[Wrapper Generation]-------------------------------------------------------
+
 # Create a single wrapper script and symlink
 create_wrapper() {
     local name="$1"
@@ -69,22 +131,39 @@ create_wrapper() {
     local symlink_path="$SYMLINK_DIR/$name"
 
     # Create wrapper script
-    cat > "$wrapper_path" <<EOF
+    if ! cat > "$wrapper_path" <<EOF
 #!/usr/bin/env bash
 # kettle-generated
 exec steam -applaunch $appid "\$@"
 EOF
-    chmod +x "$wrapper_path"
+    then
+        echo "Warning: failed to write wrapper $wrapper_path" >&2
+        return 1
+    fi
+
+    if ! chmod +x "$wrapper_path"; then
+        echo "Warning: failed to chmod $wrapper_path" >&2
+        return 1
+    fi
 
     # Create symlink
-    ln -sf "$wrapper_path" "$symlink_path"
+    if ! ln -sf "$wrapper_path" "$symlink_path"; then
+        echo "Warning: failed to symlink $symlink_path" >&2
+        return 1
+    fi
 }
 
 # Create wrapper scripts and symlinks
 init_wrappers() {
     # Ensure directories exist
-    mkdir -p "$WRAPPER_DIR"
-    mkdir -p "$SYMLINK_DIR"
+    if ! mkdir -p "$WRAPPER_DIR"; then
+        echo "Warning: failed to create $WRAPPER_DIR, skipping wrapper refresh" >&2
+        return 1
+    fi
+    if ! mkdir -p "$SYMLINK_DIR"; then
+        echo "Warning: failed to create $SYMLINK_DIR, skipping wrapper refresh" >&2
+        return 1
+    fi
 
     # Get list of current games
     local current_wrappers=()
@@ -130,8 +209,7 @@ init_wrappers() {
     done < <(list_games)
 }
 
-# Auto-refresh wrappers
-init_wrappers
+#--[Resolution]----------------------------------------------------------------
 
 # Resolve slug/initials to appid
 get_appid() {
@@ -147,15 +225,142 @@ get_appid() {
     return 1
 }
 
-# Get installdir from appid
+# Get installdir from appid. Returns 1 if not found so callers never
+# act on an empty value (e.g. an unqualified pkill pattern).
 get_installdir() {
-    local appid="$1"
-    grep -m1 '"installdir"' "$STEAM_ROOT/steamapps/appmanifest_$appid.acf" 2>/dev/null | \
-        sed 's/.*"installdir"[[:space:]]*"\(.*\)"/\1/'
+    local appid="$1" installdir
+    installdir=$(grep -m1 '"installdir"' "$STEAM_ROOT/steamapps/appmanifest_$appid.acf" 2>/dev/null | \
+        sed 's/.*"installdir"[[:space:]]*"\(.*\)"/\1/')
+    [[ -z "$installdir" ]] && return 1
+    echo "$installdir"
 }
 
-# Handle subcommands
+#--[Custom Games]---------------------------------------------------------------
+
+# Ensure the custom games registry file exists
+init_custom_registry() {
+    mkdir -p "$(dirname "$CUSTOM_REGISTRY")"
+    [[ -f "$CUSTOM_REGISTRY" ]] || echo '{}' > "$CUSTOM_REGISTRY"
+}
+
+# Remove custom game entries whose executable no longer exists on disk
+# (self-healing: nothing else notices when a sideloaded game is deleted)
+prune_custom_games() {
+    init_custom_registry
+    local slug _title exe stale=()
+    while IFS='|' read -r slug _title exe; do
+        [[ -f "$exe" ]] && continue
+        stale+=("$slug")
+    done < <(jq -r 'to_entries[] | "\(.key)|\(.value.title)|\(.value.executable)"' "$CUSTOM_REGISTRY")
+
+    for slug in "${stale[@]}"; do
+        rm -f "$CUSTOM_WRAPPER_DIR/$slug" "$SYMLINK_DIR/$slug"
+        if jq --arg k "$slug" 'del(.[$k])' "$CUSTOM_REGISTRY" > "$CUSTOM_REGISTRY.tmp"; then
+            mv "$CUSTOM_REGISTRY.tmp" "$CUSTOM_REGISTRY"
+        else
+            rm -f "$CUSTOM_REGISTRY.tmp"
+        fi
+    done
+}
+
+# List custom games as slug|title|executable
+list_custom_games() {
+    init_custom_registry
+    prune_custom_games
+    jq -r 'to_entries[] | "\(.key)|\(.value.title)|\(.value.executable)"' "$CUSTOM_REGISTRY" 2>/dev/null
+}
+
+# Look up a custom game's executable + prefix by slug
+get_custom_game() {
+    local slug="$1"
+    init_custom_registry
+    jq -r --arg k "$slug" '.[$k] | select(. != null) | "\(.executable)|\(.prefix)"' "$CUSTOM_REGISTRY"
+}
+
+# Create a wrapper that launches an exe via umu-run under Proton, and symlink it
+create_custom_wrapper() {
+    local slug="$1" exe="$2" prefix="$3"
+    local wrapper_path="$CUSTOM_WRAPPER_DIR/$slug"
+    local symlink_path="$SYMLINK_DIR/$slug"
+
+    mkdir -p "$CUSTOM_WRAPPER_DIR" "$SYMLINK_DIR" "$prefix"
+
+    if ! cat > "$wrapper_path" <<EOF
+#!/usr/bin/env bash
+# kettle-generated (custom/sideload)
+if ! command -v steam-run >/dev/null 2>&1 || ! command -v umu-run >/dev/null 2>&1; then
+    echo "Error: missing required dependencies: steam-run umu-run" >&2
+    exit 1
+fi
+export WINEPREFIX="$prefix"
+export GAMEID=umu-default
+export PROTONPATH="$PROTON_PATH"
+exec steam-run umu-run "$exe" "\$@"
+EOF
+    then
+        echo "Warning: failed to write wrapper $wrapper_path" >&2
+        return 1
+    fi
+
+    chmod +x "$wrapper_path" || { echo "Warning: failed to chmod $wrapper_path" >&2; return 1; }
+    ln -sf "$wrapper_path" "$symlink_path" || { echo "Warning: failed to symlink $symlink_path" >&2; return 1; }
+}
+
+# Register a new custom (sideloaded) game and generate its wrapper
+add_custom_game() {
+    local title="$1" exe="$2"
+    check_deps "${CUSTOM_GAME_DEPS[@]}"
+
+    if [[ -z "$PROTON_PATH" ]]; then
+        echo "Error: no Proton build found under $STEAM_ROOT (checked compatibilitytools.d and steamapps/common)" >&2
+        exit 1
+    fi
+
+    if [[ ! -f "$exe" ]]; then
+        echo "Error: executable not found: $exe" >&2
+        exit 1
+    fi
+
+    local slug prefix
+    slug=$(get_slug "$title")
+    if [[ -z "$slug" ]]; then
+        echo "Error: could not derive a slug from name: $title" >&2
+        exit 1
+    fi
+    prefix="$CUSTOM_PREFIX_DIR/$slug"
+
+    init_custom_registry
+    if ! jq --arg k "$slug" --arg title "$title" --arg exe "$exe" --arg prefix "$prefix" \
+        '.[$k] = {title: $title, executable: $exe, prefix: $prefix}' \
+        "$CUSTOM_REGISTRY" > "$CUSTOM_REGISTRY.tmp"; then
+        echo "Error: failed to update registry $CUSTOM_REGISTRY" >&2
+        rm -f "$CUSTOM_REGISTRY.tmp"
+        exit 1
+    fi
+    mv "$CUSTOM_REGISTRY.tmp" "$CUSTOM_REGISTRY"
+
+    create_custom_wrapper "$slug" "$exe" "$prefix"
+    echo "Added: $title -> $slug"
+}
+
+#--[Subcommands]---------------------------------------------------------------
+
 case "${1:-}" in
+    help|-h|--help)
+        cat <<'EOF'
+kettle - Steam game launcher with auto-generated wrapper scripts
+
+Usage: kettle [command] [args]
+
+Commands:
+  (none)              Launch Steam
+  big, bigpicture     Launch Steam in Big Picture mode
+  ls, list            List available games (Steam + custom)
+  kill, stop <game>   Kill a running game by slug/initials
+  add [title] [exe]   Register a sideloaded (non-Steam) game
+  help, -h, --help    Show this help
+EOF
+        ;;
     ls|list)
         echo ""
         echo "Available games:"
@@ -168,6 +373,9 @@ case "${1:-}" in
                 echo "  $slug"
             fi
         done < <(list_games)
+        while IFS='|' read -r slug _title _exe; do
+            echo "  $slug"
+        done < <(list_custom_games)
         ;;
     kill|stop)
         game="${2:-}"
@@ -175,24 +383,60 @@ case "${1:-}" in
             echo "Usage: kettle kill <game-slug>"
             exit 1
         fi
+        if custom_entry=$(get_custom_game "$game") && [[ -n "$custom_entry" ]]; then
+            exe="${custom_entry%%|*}"
+            killed=1
+            pkill -f "$exe" 2>/dev/null || killed=0
+            if [[ $killed -eq 1 ]]; then
+                echo "Killed $game"
+            else
+                echo "Not running: $game"
+            fi
+            exit 0
+        fi
         appid=$(get_appid "$game")
         if [[ -z "$appid" ]]; then
             echo "Unknown game: $game"
             exit 1
         fi
-        installdir=$(get_installdir "$appid")
+        if ! installdir=$(get_installdir "$appid"); then
+            echo "Error: could not determine install directory for $game (appid $appid)" >&2
+            exit 1
+        fi
         # Kill reaper + all processes matching installdir (. matches both / and \)
-        pkill -f "SteamLaunch AppId=$appid" 2>/dev/null
-        if pkill -9 -f "common.$installdir"; then
+        killed_reaper=1
+        pkill -f "SteamLaunch AppId=$appid" 2>/dev/null || killed_reaper=0
+        killed_process=1
+        pkill -9 -f "common.$installdir" || killed_process=0
+        if [[ $killed_reaper -eq 1 ]] || [[ $killed_process -eq 1 ]]; then
             echo "Killed $game"
         else
             echo "Not running: $game"
         fi
         ;;
+    add)
+        title="${2:-}"
+        if [[ -z "$title" ]]; then
+            read -rp "Game name: " title
+        fi
+        if [[ -z "$title" ]]; then
+            echo "Error: game name required" >&2
+            exit 1
+        fi
+        exe="${3:-}"
+        if [[ -z "$exe" ]]; then
+            read -rp "Path to executable: " exe
+        fi
+        exe="${exe/#\~/$HOME}"
+        exe=$(realpath -m -- "$exe")
+        add_custom_game "$title" "$exe"
+        ;;
     big|bigpicture)
+        init_wrappers
         exec gamemoderun steam -tenfoot
         ;;
     *)
+        init_wrappers
         exec gamemoderun steam
         ;;
 esac
