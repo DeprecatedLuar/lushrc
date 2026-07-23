@@ -11,6 +11,8 @@ TOLERANCE_KB=5  # Acceptable deviation from target
 
 #--[Argument Parsing]-------------------------------------------------------
 
+ORIGINAL_ARGS=("$@")  # preserved for nix-shell re-exec before flags are shifted away
+
 # Handle flags
 while [[ "$1" == -* ]]; do
     case "$1" in
@@ -94,6 +96,13 @@ fi
 #--[Tool Check]-------------------------------------------------------------
 
 if ! command -v cwebp >/dev/null 2>&1; then
+    # Re-exec the whole run inside a single nix-shell (NixOS only) so cwebp is
+    # on PATH for every binary-search iteration — pays the startup cost once.
+    if [ -z "$SQUISH_NIX_SHELL" ] && [ -f /etc/NIXOS ] && command -v nix-shell >/dev/null 2>&1; then
+        export SQUISH_NIX_SHELL=1
+        exec nix-shell -p libwebp --run "$(printf '%q ' "$0" "${ORIGINAL_ARGS[@]}")"
+    fi
+
     echo "Error: cwebp not found"
     echo ""
     echo "On NixOS, install with:"
@@ -143,7 +152,10 @@ optimize_one() {
     if [ "$INPUT_SIZE_KB" -le "$TARGET_KB" ]; then
         cp "$UNSQUISHED_FILE" "$OUTPUT"
         printf "Skipped: %s (already %dkb ≤ %dkb)\n" "$(basename "$OUTPUT")" "$INPUT_SIZE_KB" "$TARGET_KB"
-        [ "$KEEP_ORIGINAL" = false ] && rm "$UNSQUISHED_FILE"
+        if [ "$KEEP_ORIGINAL" = false ]; then
+            rm "$UNSQUISHED_FILE"
+            rmdir "$UNSQUISHED_DIR" 2>/dev/null || true  # drop dir if now empty
+        fi
         return 0
     fi
 
@@ -312,7 +324,10 @@ optimize_one() {
         printf "\rDone: %s (q=%d, %dkb, %s%dkb) [original → unsquished/]\n" \
             "$(basename "$OUTPUT")" "$BEST_Q" "$BEST_SIZE" "$SIGN" "$DIFF"
 
-        [ "$KEEP_ORIGINAL" = false ] && rm "$UNSQUISHED_FILE"
+        if [ "$KEEP_ORIGINAL" = false ]; then
+            rm "$UNSQUISHED_FILE"
+            rmdir "$UNSQUISHED_DIR" 2>/dev/null || true  # drop dir if now empty
+        fi
         return 0
     else
         printf "\rFailed: %s (no valid output)\n" "$(basename "$OUTPUT")"

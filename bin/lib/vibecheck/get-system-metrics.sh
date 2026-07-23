@@ -10,7 +10,7 @@ for arg in "$@"; do
         metrics+=("$arg")
     fi
 done
-[[ ${#metrics[@]} -eq 0 ]] && metrics=(cpu ram gpu fan bat)
+[[ ${#metrics[@]} -eq 0 ]] && metrics=(cpu ram gpu fan bat disk)
 
 # Dependency check - warn about missing tools
 MISSING_DEPS=()
@@ -244,6 +244,16 @@ for metric in "${metrics[@]}"; do
                 status=$(cat "$psu/status" 2>/dev/null)
                 [[ -n "$capacity" ]] && printf "BAT %s%% (%s)\n" "$capacity" "$status"
             done
+            ;;
+        disk|storage)
+            if [[ ${#metrics[@]} -eq 1 ]]; then
+                df -h -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 {
+                    pct=$5; gsub(/%/,"",pct)
+                    printf "%s %s%% (%s / %s) on %s\n", pct>=90 ? "!!" : "DISK", pct, $3, $2, $6
+                }'
+            else
+                df -h / 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); printf "DISK %s%%\n", $5}'
+            fi
             ;;
     esac
 done

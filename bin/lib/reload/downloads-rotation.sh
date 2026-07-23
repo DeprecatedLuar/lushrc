@@ -2,7 +2,7 @@
 # Downloads rotation - keeps 3 reboots of history in .cache/downloads/{1,2,3}
 # Called on login shells - only runs once per boot via temp flag
 
-FLAG="${TMPDIR:-/tmp}/.lushrc_boot_cleanup"
+FLAG="/tmp/.lushrc_boot_cleanup"
 
 if grep -q "downloads" "$FLAG" 2>/dev/null; then
     exit 0

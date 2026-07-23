@@ -6,147 +6,49 @@
 
 LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
 source "$LIBDIR/shared/net.sh"
+source "$LIBDIR/lsh/unlock.sh"
+source "$LIBDIR/lsh/list.sh"
+source "$LIBDIR/lsh/add.sh"
+source "$LIBDIR/lsh/edit.sh"
+source "$LIBDIR/lsh/remove.sh"
+source "$LIBDIR/lsh/keys.sh"
 
-# Handle 'unlock' subcommand - send SSH keys for password-free access
-if [[ "$1" == "unlock" ]]; then
-    shift
-    if [[ $# -lt 1 ]]; then
-        echo "Usage: lsh unlock [keyfile] <user@host[:port]> [--all]" >&2
-        echo "  Auto-detects ed25519 > rsa if no keyfile given" >&2
-        exit 1
-    fi
+LSH_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 
-    # Parse arguments
-    KEYFILE=""
-    SEND_ALL=false
-    HOST_ARG=""
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --all)
-                SEND_ALL=true
-                shift
-                ;;
-            *)
-                # If it looks like a file and exists, treat as keyfile
-                if [[ -f "$1" ]] || [[ "$1" == *.pub ]]; then
-                    KEYFILE="$1"
-                    shift
-                else
-                    HOST_ARG="$1"
-                    shift
-                    break
-                fi
-                ;;
-        esac
-    done
-
-    [[ -z "$HOST_ARG" ]] && { echo "lsh unlock: no host specified" >&2; exit 1; }
-
-    # Determine which key(s) to send
-    KEYS=()
-    if $SEND_ALL; then
-        mapfile -t KEYS < <(find ~/.ssh -maxdepth 1 -name "*.pub" -type f 2>/dev/null)
-        [[ ${#KEYS[@]} -eq 0 ]] && { echo "lsh unlock: no public keys found in ~/.ssh/" >&2; exit 1; }
-    elif [[ -n "$KEYFILE" ]]; then
-        [[ ! -f "$KEYFILE" ]] && { echo "lsh unlock: key file not found: $KEYFILE" >&2; exit 1; }
-        KEYS=("$KEYFILE")
-    else
-        # Auto-detect: ed25519 > rsa
-        if [[ -f ~/.ssh/id_ed25519.pub ]]; then
-            KEYS=(~/.ssh/id_ed25519.pub)
-        elif [[ -f ~/.ssh/id_rsa.pub ]]; then
-            KEYS=(~/.ssh/id_rsa.pub)
-        else
-            echo "lsh unlock: no default key found (id_ed25519.pub or id_rsa.pub)" >&2
-            exit 1
-        fi
-    fi
-
-    # Read key contents
-    KEY_DATA=""
-    for key in "${KEYS[@]}"; do
-        KEY_DATA+="$(cat "$key")"$'\n'
-    done
-
-    # Send keys via SSH
-    # Use the lsh wrapper itself for .N expansion and --password support
-    "$0" "$HOST_ARG" "bash -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'" <<< "$KEY_DATA"
-
-    if [[ $? -eq 0 ]]; then
-        echo "✓ Unlocked: ${KEYS[*]##*/} → $HOST_ARG"
-    else
-        echo "✗ Failed to unlock $HOST_ARG" >&2
-        exit 1
-    fi
-    exit 0
-fi
-
-# Handle 'add' subcommand
-if [[ "$1" == "add" ]]; then
-    shift
-    if [[ $# -lt 2 ]]; then
-        echo "Usage: lsh add <name> <user@host[:port]> [-p port]" >&2
-        exit 1
-    fi
-
-    NAME="$1"
-    CONN="$2"
-    shift 2
-
-    # Parse port from -p flag or :port suffix
-    PORT=""
-    if [[ "$1" == "-p" && -n "$2" ]]; then
-        PORT="$2"
-    elif [[ "$CONN" =~ :([0-9]+)$ ]]; then
-        PORT="${BASH_REMATCH[1]}"
-        CONN="${CONN%:*}"
-    fi
-
-    # Parse user@host
-    if [[ "$CONN" =~ ^([^@]+)@(.+)$ ]]; then
-        USER="${BASH_REMATCH[1]}"
-        HOST="${BASH_REMATCH[2]}"
-    else
-        echo "lsh: invalid format, expected user@host[:port]" >&2
-        exit 1
-    fi
-
-    # Ensure ~/.ssh/config.d/ exists
-    mkdir -p ~/.ssh/config.d
-    chmod 700 ~/.ssh/config.d
-
-    # Ensure Include directive exists in ~/.ssh/config
-    SSH_CONFIG="$HOME/.ssh/config"
-    if [[ ! -f "$SSH_CONFIG" ]]; then
-        echo "Include ~/.ssh/config.d/*" > "$SSH_CONFIG"
-        chmod 600 "$SSH_CONFIG"
-    elif ! grep -q "^Include.*config\.d/\*" "$SSH_CONFIG"; then
-        # Prepend Include directive
-        TMP=$(mktemp)
-        echo "Include ~/.ssh/config.d/*" > "$TMP"
-        cat "$SSH_CONFIG" >> "$TMP"
-        mv "$TMP" "$SSH_CONFIG"
-        chmod 600 "$SSH_CONFIG"
-    fi
-
-    # Append to ~/.ssh/config.d/lsh
-    LSH_CONFIG="$HOME/.ssh/config.d/lsh"
-    {
-        echo ""
-        echo "Host $NAME"
-        echo "    HostName $HOST"
-        echo "    User $USER"
-        [[ -n "$PORT" ]] && echo "    Port $PORT"
-    } >> "$LSH_CONFIG"
-    chmod 600 "$LSH_CONFIG"
-
-    echo "Added: ssh $NAME → $USER@$HOST${PORT:+:$PORT}"
-    exit 0
-fi
+case "$1" in
+    unlock)
+        shift
+        lsh_unlock "$@"
+        exit $?
+        ;;
+    ls|list)
+        lsh_list
+        exit $?
+        ;;
+    keys)
+        shift
+        lsh_keys "$@"
+        exit $?
+        ;;
+    add|a)
+        shift
+        lsh_add "$@"
+        exit $?
+        ;;
+    edit|e)
+        shift
+        lsh_edit "$@"
+        exit $?
+        ;;
+    remove|rm)
+        shift
+        lsh_remove "$@"
+        exit $?
+        ;;
+esac
 
 # Find the real ssh binary (skip ourselves)
-_SELF_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+_SELF_DIR="$(dirname "$LSH_SELF")"
 _RAW_SSH=$(type -a ssh 2>/dev/null | awk '{print $NF}' | grep -vF "$_SELF_DIR/" | head -1)
 [[ -z "$_RAW_SSH" ]] && { echo "lsh: could not find system ssh" >&2; exit 1; }
 
@@ -179,12 +81,22 @@ for arg in "$@"; do
 lsh — lushrc ssh wrapper
 
 Commands:
-  lsh unlock [keyfile] <user@host[:port]> [--all]
+  lsh unlock <user@host[:port]> [keyfile] [--all]
                           Send SSH keys for password-free access
-                          Auto-detects ed25519 > rsa if no keyfile given
+                          keyfile looked up in ~/.ssh/public/<keyfile>.pub
+                          Auto-detects the only key in ~/.ssh/public if none given
 
-  lsh add <name> <user@host[:port]> [-p port]
+  lsh add|a <name> <user@host[:port]> [-p port]
                           Save SSH config entry to ~/.ssh/config.d/lsh
+
+  lsh edit|e <name>       Edit an existing entry in $EDITOR (key=value scratch file)
+  lsh edit|e <name> <user@host[:port]> [-p port]
+                          Edit an existing entry inline (same syntax as add)
+
+  lsh remove|rm <name>    Delete an entry from ~/.ssh/config.d/lsh
+
+  lsh ls | lsh list       List all configured connections (name → user@host:port)
+  lsh keys [pub|priv]     List SSH keypairs in ~/.ssh (name, type, priv?, fingerprint)
 
 Extras:
   --password, -P <pass>   Connect using sshpass (requires sshpass)
@@ -193,6 +105,7 @@ Extras:
   user@.N[:port]          user + subnet + optional port
 
 EOF
+            # Also show real ssh's own usage; its exit status is irrelevant here
             "$_RAW_SSH" 2>&1 || true
             exit 0
             ;;
