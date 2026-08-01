@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+LIBDIR="${LIBDIR:-$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib}"
+source "$LIBDIR/shared/gh-install.sh"
+gh_install "sat" "DeprecatedLuar/sat" "$@"

@@ -12,8 +12,15 @@ source "$LIBDIR/lsh/add.sh"
 source "$LIBDIR/lsh/edit.sh"
 source "$LIBDIR/lsh/remove.sh"
 source "$LIBDIR/lsh/keys.sh"
+source "$LIBDIR/lsh/tunnel.sh"
 
 LSH_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+
+# Find the real ssh binary (skip ourselves) — needed by both subcommands (tunnel) and the main path below
+_SELF_DIR="$(dirname "$LSH_SELF")"
+_RAW_SSH=$(type -a ssh 2>/dev/null | awk '{print $NF}' | grep -vF "$_SELF_DIR/" | head -1)
+[[ -z "$_RAW_SSH" ]] && { echo "lsh: could not find system ssh" >&2; exit 1; }
+REAL_SSH=("$_RAW_SSH")
 
 case "$1" in
     unlock)
@@ -45,21 +52,18 @@ case "$1" in
         lsh_remove "$@"
         exit $?
         ;;
+    tunnel|t)
+        shift
+        lsh_tunnel "$@"
+        exit $?
+        ;;
 esac
-
-# Find the real ssh binary (skip ourselves)
-_SELF_DIR="$(dirname "$LSH_SELF")"
-_RAW_SSH=$(type -a ssh 2>/dev/null | awk '{print $NF}' | grep -vF "$_SELF_DIR/" | head -1)
-[[ -z "$_RAW_SSH" ]] && { echo "lsh: could not find system ssh" >&2; exit 1; }
 
 # Use kitten ssh only when running inside Kitty terminal
 # Disabled: kitten ssh hangs the terminal
 # if [[ -n "$KITTY_WINDOW_ID" ]] && command -v kitten &>/dev/null; then
 #     REAL_SSH=(kitten ssh)
-# else
-#     REAL_SSH=("$_RAW_SSH")
 # fi
-REAL_SSH=("$_RAW_SSH")
 
 # Parse --password flag (can appear anywhere in args)
 PASSWORD=""
@@ -97,6 +101,14 @@ Commands:
 
   lsh ls | lsh list       List all configured connections (name → user@host:port)
   lsh keys [pub|priv]     List SSH keypairs in ~/.ssh (name, type, priv?, fingerprint)
+
+  lsh tunnel|t [-d] <host> <port>[,<port>|<local>:<remote>...]
+                          Local port forward(s) to <host>, no remote shell
+                          Blocks the terminal until Ctrl-C (like a daemon)
+                          Bare port forwards the same port both sides
+                          local:remote overrides the local-side port
+                          Comma-separate multiple: 1111,2222,1112:1111
+                          -d backgrounds the tunnel instead (-fN)
 
 Extras:
   --password, -P <pass>   Connect using sshpass (requires sshpass)

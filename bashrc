@@ -193,4 +193,4 @@ alias feh='feh --action "wl-copy --type $(file --mime-type -b %F) < %F"'
 
 
 # Added by Antigravity CLI installer
-export PATH="/home/luar/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
