@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# gobuild - portable go build: static (CGO_ENABLED=0), stripped, cross-arch aware
+#
+# Usage:
+#   gobuild [pkg] [arch] [-o output]
+#
+#   pkg     package path to build (default: auto-resolved, see below)
+#   arch    amd64 | arm64 (default: native GOARCH)
+#   -o      output binary path (default: ./<pwd-basename>)
+#
+# Package resolution when [pkg] is omitted:
+#   1. ./main.go                       (root package)
+#   2. ./cmd/<basename of pwd>/main.go (cmd dir matching repo name)
+#   3. the single subdir under ./cmd/  (only if exactly one exists)
+#   otherwise: fail and list what's under ./cmd/ so you can pass it explicitly
+
+set -euo pipefail
+
+pkg=""
+arch="$(go env GOARCH)"
+output=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)
+            output="$2"
+            shift 2
+            ;;
+        amd64|arm64)
+            arch="$1"
+            shift
+            ;;
+        *)
+            pkg="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$pkg" ]]; then
+    name="$(basename "$PWD")"
+    if [[ -f "./main.go" ]]; then
+        pkg="."
+    elif [[ -f "./cmd/$name/main.go" ]]; then
+        pkg="./cmd/$name"
+    elif [[ -d "./cmd" ]]; then
+        subdirs=(./cmd/*/)
+        if [[ ${#subdirs[@]} -eq 1 ]]; then
+            pkg="${subdirs[0]%/}"
+        else
+            echo "gobuild: can't resolve package — multiple dirs under ./cmd/:" >&2
+            printf '  %s\n' "${subdirs[@]%/}" >&2
+            echo "pass one explicitly: gobuild ./cmd/<name>" >&2
+            exit 1
+        fi
+    else
+        echo "gobuild: no ./main.go and no ./cmd/ dir — pass a package path explicitly" >&2
+        exit 1
+    fi
+fi
+
+if [[ -z "$output" ]]; then
+    if [[ "$pkg" == "." ]]; then
+        output="./$(basename "$PWD")"
+    else
+        output="./$(basename "$pkg")"
+    fi
+fi
+
+echo "gobuild: GOARCH=$arch pkg=$pkg -o $output" >&2
+CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w" -o "$output" "$pkg"

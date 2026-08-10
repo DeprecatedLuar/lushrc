@@ -47,7 +47,7 @@ export SHARED="$WORKSPACE/shared"
 export SATELLITE="$PROJECTS/cli/the-satellite"
 
 # Tools subdirectories
-export DOCKER_DIR="$WORKSPACE/docker"
+export SERVICES_DIR="$WORKSPACE/services"
 
 # Script library directory
 export LIBDIR="$BASHRC/bin/lib"

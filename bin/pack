@@ -17,7 +17,7 @@ VOLUME=""
 i=0
 while [ $i -lt $# ]; do
   i=$((i + 1))
-  eval arg=\${$i}
+  arg=${!i}
 
   case "$arg" in
     -h|--help)
@@ -29,7 +29,7 @@ while [ $i -lt $# ]; do
       ;;
     -v|--volume|-s|--split)
       i=$((i + 1))
-      eval VOLUME=\${$i}
+      VOLUME=${!i}
       if [ -z "$VOLUME" ]; then
         echo "Error: -v/--volume/-s/--split requires an argument (e.g., '2' or '200mb')"
         exit 1
@@ -213,7 +213,11 @@ cleanup() {
 
     if [ "$KEEP_ORIGINAL" = false ] && [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
         if [ "$SUCCESS" = false ] && [ -e "$TEMP_TARGET" ]; then
-            mv "$TEMP_TARGET" "$ORIGINAL_DIR/" 2>/dev/null
+            if ! mv "$TEMP_TARGET" "$ORIGINAL_DIR/"; then
+                echo "Error: failed to restore '$BASENAME' from $TEMP_TARGET — not deleting, recover it manually" >&2
+                trap - INT TERM EXIT
+                exit 1
+            fi
         fi
         rm -rf "$TEMP_DIR"
     fi
@@ -224,7 +228,10 @@ trap cleanup INT TERM EXIT
 if [ "$KEEP_ORIGINAL" = false ]; then
     TEMP_DIR=$(mktemp -d)
     TEMP_TARGET="$TEMP_DIR/$BASENAME"
-    mv "$TARGET" "$TEMP_TARGET"
+    if ! mv "$TARGET" "$TEMP_TARGET"; then
+        echo "Error: failed to stage '$TARGET' for packing" >&2
+        exit 1
+    fi
     TARGET="$TEMP_TARGET"
 fi
 

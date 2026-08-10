@@ -175,15 +175,30 @@ sync_wallpapers_gallery
 
 #--[LATEST SCREENSHOT]---------------------------
 
+SCREENSHOT_SOURCE_BASE="latest"        # $MEDIA/screenshots/<base>.<ext> written by the capture keybind
+SCREENSHOT_LINK_BASE="screenshot"      # $MEDIA/<base>.<ext>
+SCREENSHOT_GALLERY_BASE="latest-screenshot"
+
 sync_latest_screenshot() {
-    local screenshot_src="$MEDIA/screenshots/latest.png"
-    [ -f "$screenshot_src" ] || return 0
+    local screenshot_src=""
+    for candidate in "$MEDIA/screenshots/$SCREENSHOT_SOURCE_BASE".*; do
+        [ -f "$candidate" ] || continue
+        screenshot_src="$candidate"
+        break
+    done
+
+    # Drop links from a previous capture format so only one survives
+    find "$MEDIA" -maxdepth 1 -type l -name "$SCREENSHOT_LINK_BASE.*" -delete 2>/dev/null || true
+
+    [ -n "$screenshot_src" ] || return 0
+    local ext="${screenshot_src##*.}"
 
     # Link to media root for quick access
-    ln -sf "$screenshot_src" "$MEDIA/screenshot.png"
+    ln -sf "$screenshot_src" "$MEDIA/$SCREENSHOT_LINK_BASE.$ext"
 
-    # Link to pictures gallery
-    [ -d "$PICTURES_GALLERY" ] && ln -sf "$screenshot_src" "$PICTURES_GALLERY/latest-screenshot.png"
+    # Link to pictures gallery — screenshots/ is excluded from sync_media_gallery,
+    # and $MEDIA/<link>.<ext> is a symlink, so this is the only gallery entry for it
+    [ -d "$PICTURES_GALLERY" ] && ln -sf "$screenshot_src" "$PICTURES_GALLERY/$SCREENSHOT_GALLERY_BASE.$ext"
 }
 
 sync_latest_screenshot

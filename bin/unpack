@@ -75,29 +75,23 @@ if [[ "$ARCHIVE_NAME" == *.aa ]]; then
 fi
 ORIGINAL_DIR=$(pwd)
 
+# Longest/compound extensions must precede their bare suffix (tar.gz before gz, etc.)
+# Kept as the single source of truth for supported formats; the dispatch case below
+# must stay in sync since each format needs different extraction handling.
+ARCHIVE_EXTENSIONS=(
+  tar.gz tgz tar.bz2 tbz2 tar.xz txz tar
+  zip bacpac kra docx xlsx pptx
+  7z iso rar gz bz2 xz
+)
+
 if [ "$IS_SPLIT" = false ]; then
-  case "$ARCHIVE_NAME" in
-    *.tar.gz) BASE_NAME="${ARCHIVE_NAME%.tar.gz}" ;;
-    *.tgz) BASE_NAME="${ARCHIVE_NAME%.tgz}" ;;
-    *.tar.bz2) BASE_NAME="${ARCHIVE_NAME%.tar.bz2}" ;;
-    *.tbz2) BASE_NAME="${ARCHIVE_NAME%.tbz2}" ;;
-    *.tar.xz) BASE_NAME="${ARCHIVE_NAME%.tar.xz}" ;;
-    *.txz) BASE_NAME="${ARCHIVE_NAME%.txz}" ;;
-    *.tar) BASE_NAME="${ARCHIVE_NAME%.tar}" ;;
-    *.zip) BASE_NAME="${ARCHIVE_NAME%.zip}" ;;
-    *.bacpac) BASE_NAME="${ARCHIVE_NAME%.bacpac}" ;;
-    *.kra) BASE_NAME="${ARCHIVE_NAME%.kra}" ;;
-    *.docx) BASE_NAME="${ARCHIVE_NAME%.docx}" ;;
-    *.xlsx) BASE_NAME="${ARCHIVE_NAME%.xlsx}" ;;
-    *.pptx) BASE_NAME="${ARCHIVE_NAME%.pptx}" ;;
-    *.7z) BASE_NAME="${ARCHIVE_NAME%.7z}" ;;
-    *.iso) BASE_NAME="${ARCHIVE_NAME%.iso}" ;;
-    *.rar) BASE_NAME="${ARCHIVE_NAME%.rar}" ;;
-    *.gz) BASE_NAME="${ARCHIVE_NAME%.gz}" ;;
-    *.bz2) BASE_NAME="${ARCHIVE_NAME%.bz2}" ;;
-    *.xz) BASE_NAME="${ARCHIVE_NAME%.xz}" ;;
-    *) BASE_NAME="${ARCHIVE_NAME}" ;;
-  esac
+  BASE_NAME="$ARCHIVE_NAME"
+  for ext in "${ARCHIVE_EXTENSIONS[@]}"; do
+    if [[ "$ARCHIVE_NAME" == *".$ext" ]]; then
+      BASE_NAME="${ARCHIVE_NAME%."$ext"}"
+      break
+    fi
+  done
 fi
 
 TEMP_ARCHIVE_DIR=""
