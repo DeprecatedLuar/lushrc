@@ -42,6 +42,24 @@ lsh_has_compatible_term() {
     esac
 }
 
+lsh_connect_timeout() {
+    local timeout=${LSH_CONNECT_TIMEOUT:-10}
+    [[ $timeout =~ ^[1-9][0-9]*$ ]] || timeout=10
+    printf '%s\n' "$timeout"
+}
+
+lsh_target_responds_to_ping() {
+    local raw_ssh=$1
+    local target=$2
+    local config host
+
+    command -v ping >/dev/null 2>&1 || return 1
+    config=$("$raw_ssh" -G -- "$target" 2>/dev/null) || return 1
+    host=$(awk 'tolower($1) == "hostname" { print $2; exit }' <<< "$config")
+    [[ -n $host ]] || return 1
+    ping -n -c 1 -W 1 -- "$host" >/dev/null 2>&1
+}
+
 lsh_exec_ssh() {
     local raw_ssh=$1
     shift
@@ -52,6 +70,30 @@ lsh_exec_ssh() {
     exec "$raw_ssh" "$@"
 }
 
+lsh_exec_guarded_ssh() {
+    local raw_ssh=$1
+    local timeout started status target
+    shift
+    timeout=$(lsh_connect_timeout)
+    target=${!#}
+    started=$SECONDS
+
+    if lsh_has_compatible_term; then
+        TERM=xterm-256color "$raw_ssh" \
+            -o "ConnectTimeout=$timeout" -o ConnectionAttempts=1 "$@"
+    else
+        "$raw_ssh" -o "ConnectTimeout=$timeout" -o ConnectionAttempts=1 "$@"
+    fi
+    status=$?
+
+    if (( status == 255 && SECONDS - started >= timeout )) \
+        && lsh_target_responds_to_ping "$raw_ssh" "$target"; then
+        printf 'lsh: %s responds to ping; continuing to wait for SSH\n' "$target" >&2
+        lsh_exec_ssh "$raw_ssh" "$@"
+    fi
+    return "$status"
+}
+
 lsh_set_staged_transport_label() {
     local transport=$1
     [[ -n ${TMUX_PANE:-} ]] || return 0
@@ -60,9 +102,12 @@ lsh_set_staged_transport_label() {
 
 lsh_prepare_mosh() {
     local raw_ssh=$1
+    local timeout
     shift
 
-    LSH_MOSH_SSH="$raw_ssh"
+    timeout=$(lsh_connect_timeout)
+    printf -v LSH_MOSH_SSH '%q -o %q -o %q' \
+        "$raw_ssh" "ConnectTimeout=$timeout" ConnectionAttempts=1
     LSH_MOSH_TARGET=""
 
     case $# in
@@ -71,7 +116,7 @@ lsh_prepare_mosh() {
             ;;
         3)
             [[ $1 == -p && $2 =~ ^[0-9]+$ ]] || return 1
-            printf -v LSH_MOSH_SSH '%q -p %q' "$raw_ssh" "$2"
+            printf -v LSH_MOSH_SSH '%s -p %q' "$LSH_MOSH_SSH" "$2"
             LSH_MOSH_TARGET=$3
             ;;
         *)
@@ -89,12 +134,15 @@ lsh_run_staged_transport() {
     local raw_ssh=$1
     local allow_mosh=$2
     shift 2
-    local client status
+    local client status started timeout target
 
     client=$(command -v mosh-client 2>/dev/null || true)
     if [[ $allow_mosh == 1 && -n $client ]] \
         && command -v mosh >/dev/null 2>&1 \
         && lsh_prepare_mosh "$raw_ssh" "$@"; then
+        timeout=$(lsh_connect_timeout)
+        target=${!#}
+        started=$SECONDS
         lsh_set_staged_transport_label mosh
         if lsh_has_compatible_term; then
             TERM=xterm-256color LSH_MOSH_CLIENT="$client" \
@@ -106,6 +154,13 @@ lsh_run_staged_transport() {
                 --ssh="$LSH_MOSH_SSH" -- "$LSH_MOSH_TARGET"
         fi
         status=$?
+
+        if (( status == 255 && SECONDS - started >= timeout )) \
+            && lsh_target_responds_to_ping "$raw_ssh" "$target"; then
+            printf 'lsh: %s responds to ping; continuing to wait for SSH\n' "$target" >&2
+            lsh_set_staged_transport_label ssh
+            lsh_exec_ssh "$raw_ssh" "$@"
+        fi
 
         # Once the UDP client has started, returning to SSH later would create
         # a surprising new session. Signals also represent an explicit stop.
@@ -123,13 +178,24 @@ lsh_run_staged_transport() {
     fi
 
     lsh_set_staged_transport_label ssh
-    lsh_exec_ssh "$raw_ssh" "$@"
+    lsh_exec_guarded_ssh "$raw_ssh" "$@"
 }
 
 lsh_remote_has_mosh() {
     local raw_ssh=$1
+    local timeout started status target
     shift
-    "$raw_ssh" "$@" 'command -v mosh-server >/dev/null 2>&1'
+    timeout=$(lsh_connect_timeout)
+    target=${!#}
+    started=$SECONDS
+    "$raw_ssh" -o "ConnectTimeout=$timeout" -o ConnectionAttempts=1 \
+        "$@" 'command -v mosh-server >/dev/null 2>&1'
+    status=$?
+    if (( status == 255 && SECONDS - started >= timeout )) \
+        && lsh_target_responds_to_ping "$raw_ssh" "$target"; then
+        return 75
+    fi
+    return "$status"
 }
 
 lsh_run_direct_smart_connection() {
@@ -153,10 +219,14 @@ lsh_run_direct_smart_connection() {
             255)
                 return "$status"
                 ;;
+            75)
+                printf 'lsh: %s responds to ping; continuing to wait for SSH\n' "${!#}" >&2
+                lsh_exec_ssh "$raw_ssh" "$@"
+                ;;
         esac
     fi
 
-    lsh_exec_ssh "$raw_ssh" "$@"
+    lsh_exec_guarded_ssh "$raw_ssh" "$@"
 }
 
 lsh_tmux_pane_output() {

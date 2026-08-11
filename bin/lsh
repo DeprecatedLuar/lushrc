@@ -33,7 +33,13 @@ case "$1" in
         exit $?
         ;;
     ls|list)
-        lsh_list
+        shift
+        lsh_list "$@"
+        exit $?
+        ;;
+    status)
+        shift
+        lsh_list --status "$@"
         exit $?
         ;;
     key|keys)
@@ -108,7 +114,9 @@ Commands:
 
   lsh remove|rm <name>    Delete an entry from ~/.ssh/config.d/lsh
 
-  lsh ls | lsh list       List all configured connections (name → user@host:port)
+  lsh ls | lsh list       List connections, then dim unreachable ones interactively
+  lsh list --status       Explicit status-check spelling
+  lsh status              Alias for lsh list --status
   lsh key|keys [pub|priv] List SSH keypairs in ~/.ssh (name, type, priv?, fingerprint)
 
   lsh tunnel|t [-d] <host> <port>[,<port>|<local>:<remote>...]
@@ -125,7 +133,8 @@ Extras:
   --no-mosh               Force SSH; keep local tmux staging
   --raw, --escape-hatch   Bypass lsh, exec system ssh directly
   ssh <host>              Plain interactive connections use local tmux and
-                          prefer Mosh, falling back to SSH before attachment
+                          prefer Mosh, falling back to SSH before attachment;
+                          after ten seconds, ping decides whether to keep waiting
   .N                      LAN subnet shorthand (e.g. .17 → 192.168.1.17)
   user@.N[:port]          user + subnet + optional port
 
