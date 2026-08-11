@@ -54,8 +54,8 @@ lsh_exec_ssh() {
 
 lsh_set_staged_transport_label() {
     local transport=$1
-    [[ -n ${TMUX_PANE:-} && -n ${LSH_TMUX_LABEL:-} ]] || return 0
-    tmux rename-window -t "$TMUX_PANE" "$LSH_TMUX_LABEL · $transport" 2>/dev/null || true
+    [[ -n ${TMUX_PANE:-} ]] || return 0
+    tmux set-option -w -t "$TMUX_PANE" @lsh_transport "$transport" 2>/dev/null || true
 }
 
 lsh_prepare_mosh() {
@@ -211,25 +211,30 @@ lsh_tmux_session_base() {
     base=${base#[}
     base=${base%]}
     base=${base//[^[:alnum:]_-]/-}
-    base=${base#-}
-    base=${base%-}
-    printf '%s\n' "${base:-remote}"
+    while [[ $base == -* ]]; do base=${base#-}; done
+    while [[ $base == *- ]]; do base=${base%-}; done
+    printf 'lsh-%s\n' "${base:-remote}"
 }
 
-lsh_tmux_connection_label() {
+lsh_tmux_connection_info() {
     local raw_ssh=$1
     local target=$2
-    local user host config
+    local user host effective_host config
 
     host=${target##*@}
+    host=${host#[}
+    host=${host%]}
+    config=$("$raw_ssh" -G -- "$target" 2>/dev/null || true)
+
     if [[ $target == *@* ]]; then
         user=${target%@*}
     else
-        config=$("$raw_ssh" -G -- "$target" 2>/dev/null || true)
         user=$(awk 'tolower($1) == "user" { print $2; exit }' <<< "$config")
     fi
+    effective_host=$(awk 'tolower($1) == "hostname" { print $2; exit }' <<< "$config")
 
-    [[ -n $user ]] && printf '%s@%s\n' "$user" "$host" || printf '%s\n' "$host"
+    LSH_TMUX_LABEL_RESULT=${user:+$user@}$host
+    LSH_TMUX_HOST_RESULT=${effective_host:-$host}
 }
 
 lsh_tmux_session_exists() {
@@ -243,14 +248,16 @@ lsh_stage_connection() {
     shift 3
 
     local connection_target=${!#}
-    local base label session target
-    local suffix=2
+    local base label ping_host session target status_format latency_format
+    local suffix=1
     local command output dead status
     local poll_interval="${LSH_STAGE_POLL_INTERVAL:-0.05}"
 
     base=$(lsh_tmux_session_base "$connection_target")
-    label=$(lsh_tmux_connection_label "$raw_ssh" "$connection_target")
-    session=$base
+    lsh_tmux_connection_info "$raw_ssh" "$connection_target"
+    label=$LSH_TMUX_LABEL_RESULT
+    ping_host=$LSH_TMUX_HOST_RESULT
+    session="$base-0"
     while lsh_tmux_session_exists "$session"; do
         session="$base-$suffix"
         ((suffix++))
@@ -264,9 +271,12 @@ lsh_stage_connection() {
         target="$session:0.0"
     done
 
+    status_format='#{@lsh_transport} · #{@lsh_label}'
+    printf -v latency_format '#(%q #{window_id})' "$_LSH_CONNECT_DIR/latency"
+
     printf -v command \
-        'export LSH_STAGE_CHILD=1 LSH_STAGE_MOSH=%q LSH_RAW_SSH=%q LSH_TMUX_SESSION=%q LSH_TMUX_LABEL=%q; %q' \
-        "$allow_mosh" "$raw_ssh" "$session" "$label" "$self"
+        'export LSH_STAGE_CHILD=1 LSH_STAGE_MOSH=%q LSH_RAW_SSH=%q LSH_TMUX_SESSION=%q; %q' \
+        "$allow_mosh" "$raw_ssh" "$session" "$self"
     local arg
     for arg in "$@"; do
         printf -v command '%s %q' "$command" "$arg"
@@ -275,10 +285,18 @@ lsh_stage_connection() {
         '%s; status=$?; tmux set-option -t %q @lsh_exit_status "$status" 2>/dev/null; exit "$status"' \
         "$command" "$session"
 
-    if ! tmux rename-window -t "$target" "$label · connecting" \
+    if ! tmux rename-window -t "$target" "$label" \
         \; set-option -w -t "$target" automatic-rename off \
-        \; set-option -w -t "$target" window-status-format '#W' \
-        \; set-option -w -t "$target" window-status-current-format '#W' \
+        \; set-option -w -t "$target" @lsh_transport connecting \
+        \; set-option -w -t "$target" @lsh_label "$label" \
+        \; set-option -w -t "$target" @lsh_host "$ping_host" \
+        \; set-option -w -t "$target" window-status-format "$status_format" \
+        \; set-option -w -t "$target" window-status-current-format "$status_format" \
+        \; set-option -t "$session" @lsh_managed 1 \
+        \; set-option -t "$session" @lsh_target "$connection_target" \
+        \; set-option -t "$session" status-right "$latency_format" \
+        \; set-option -t "$session" status-right-length 12 \
+        \; set-option -t "$session" status-interval 5 \
         \; set-option -t "$session" remain-on-exit on \
         \; respawn-pane -k -t "$target" "$command"; then
         tmux kill-session -t "=$session" 2>/dev/null || true

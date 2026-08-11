@@ -13,8 +13,8 @@ fi
 if [[ ${1:-} != -c && -n ${LSH_TMUX_SESSION:-} ]]; then
     tmux set-option -t "$LSH_TMUX_SESSION" @lsh_mosh_started 1 2>/dev/null || true
     tmux set-option -t "$LSH_TMUX_SESSION" @lsh_transport_started 1 2>/dev/null || true
-    if [[ -n ${TMUX_PANE:-} && -n ${LSH_TMUX_LABEL:-} ]]; then
-        tmux rename-window -t "$TMUX_PANE" "$LSH_TMUX_LABEL · mosh" 2>/dev/null || true
+    if [[ -n ${TMUX_PANE:-} ]]; then
+        tmux set-option -w -t "$TMUX_PANE" @lsh_transport mosh 2>/dev/null || true
     fi
 fi
 
