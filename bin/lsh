@@ -13,6 +13,7 @@ source "$LIBDIR/lsh/edit.sh"
 source "$LIBDIR/lsh/remove.sh"
 source "$LIBDIR/lsh/keys.sh"
 source "$LIBDIR/lsh/tunnel.sh"
+source "$LIBDIR/lsh/connect.sh"
 
 LSH_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 
@@ -20,6 +21,9 @@ LSH_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 _SELF_DIR="$(dirname "$LSH_SELF")"
 _RAW_SSH=$(type -a ssh 2>/dev/null | awk '{print $NF}' | grep -vF "$_SELF_DIR/" | head -1)
 [[ -z "$_RAW_SSH" ]] && { echo "lsh: could not find system ssh" >&2; exit 1; }
+
+# A staged child must use the same resolved adapter selected by its parent.
+[[ -n ${LSH_RAW_SSH:-} ]] && _RAW_SSH=$LSH_RAW_SSH
 REAL_SSH=("$_RAW_SSH")
 
 case "$1" in
@@ -32,7 +36,7 @@ case "$1" in
         lsh_list
         exit $?
         ;;
-    keys)
+    key|keys)
         shift
         lsh_keys "$@"
         exit $?
@@ -69,6 +73,9 @@ esac
 PASSWORD=""
 ARGS=()
 SKIP_NEXT=false
+RAW_MODE=false
+NO_TMUX=false
+NO_MOSH=false
 
 for arg in "$@"; do
     if $SKIP_NEXT; then
@@ -79,7 +86,9 @@ for arg in "$@"; do
     case "$arg" in
         -P|--password) SKIP_NEXT=true ;;
         --password=*) PASSWORD="${arg#--password=}" ;;
-        --raw|--escape-hatch) exec "$_RAW_SSH" "${ARGS[@]}" ;;
+        --no-tmux) NO_TMUX=true ;;
+        --no-mosh) NO_MOSH=true ;;
+        --raw|--escape-hatch) RAW_MODE=true ;;
         --help|-h)
             cat <<'EOF'
 lsh — lushrc ssh wrapper
@@ -100,7 +109,7 @@ Commands:
   lsh remove|rm <name>    Delete an entry from ~/.ssh/config.d/lsh
 
   lsh ls | lsh list       List all configured connections (name → user@host:port)
-  lsh keys [pub|priv]     List SSH keypairs in ~/.ssh (name, type, priv?, fingerprint)
+  lsh key|keys [pub|priv] List SSH keypairs in ~/.ssh (name, type, priv?, fingerprint)
 
   lsh tunnel|t [-d] <host> <port>[,<port>|<local>:<remote>...]
                           Local port forward(s) to <host>, no remote shell
@@ -112,7 +121,11 @@ Commands:
 
 Extras:
   --password, -P <pass>   Connect using sshpass (requires sshpass)
+  --no-tmux               Skip local tmux staging; still prefer Mosh
+  --no-mosh               Force SSH; keep local tmux staging
   --raw, --escape-hatch   Bypass lsh, exec system ssh directly
+  ssh <host>              Plain interactive connections use local tmux and
+                          prefer Mosh, falling back to SSH before attachment
   .N                      LAN subnet shorthand (e.g. .17 → 192.168.1.17)
   user@.N[:port]          user + subnet + optional port
 
@@ -124,6 +137,17 @@ EOF
         *) ARGS+=("$arg") ;;
     esac
 done
+
+$RAW_MODE && exec "$_RAW_SSH" "${ARGS[@]}"
+
+# Smart routing is deliberately narrow: only a plain interactive host is
+# eligible. Remote commands, pipes, passwords, and SSH options keep the exact
+# SSH behavior callers already rely on.
+SMART_CONNECTION=false
+if [[ ${LSH_INTERACTIVE_SHELL:-} == 1 && -z $PASSWORD && -t 0 && -t 1 ]] \
+    && lsh_is_plain_connection "${ARGS[@]}"; then
+    SMART_CONNECTION=true
+fi
 
 # Expand .N subnet shorthand in host argument (handles user@.N and bare .N)
 for i in "${!ARGS[@]}"; do
@@ -141,6 +165,32 @@ for i in "${!ARGS[@]}"; do
     fi
 done
 
+if [[ -n ${LSH_STAGE_CHILD:-} ]]; then
+    lsh_run_staged_transport "$_RAW_SSH" "${LSH_STAGE_MOSH:-1}" "${ARGS[@]}"
+    exit $?
+fi
+
+if $SMART_CONNECTION; then
+    TARGET=${ARGS[${#ARGS[@]}-1]}
+    if ! lsh_target_is_valid "$_RAW_SSH" "$TARGET"; then
+        printf "lsh: '%s' is neither a command nor a resolvable SSH host\n" "$TARGET" >&2
+        exit 2
+    fi
+
+    ALLOW_MOSH=1
+    $NO_MOSH && ALLOW_MOSH=0
+
+    if $NO_TMUX || [[ -n ${TMUX:-} ]]; then
+        lsh_run_direct_smart_connection "$_RAW_SSH" "$ALLOW_MOSH" "${ARGS[@]}"
+        exit $?
+    fi
+
+    if command -v tmux >/dev/null 2>&1; then
+        lsh_stage_connection "$LSH_SELF" "$_RAW_SSH" "$ALLOW_MOSH" "${ARGS[@]}"
+        exit $?
+    fi
+fi
+
 if [[ -n "$PASSWORD" ]]; then
     if ! command -v sshpass &>/dev/null; then
         echo "ssh: --password requires sshpass (apt install sshpass)" >&2
@@ -155,14 +205,6 @@ if [[ ! -t 0 ]]; then
     export SSH_ASKPASS_REQUIRE=prefer
 fi
 
-# Client-side TERM compatibility: send universal TERM to avoid remote terminfo issues
-# Modern terminals (kitty, alacritty, foot) use exotic TERM values that most servers
-# lack terminfo definitions for. Override to xterm-256color which is universally supported.
-case "$TERM" in
-    xterm-kitty|alacritty|alacritty-direct|foot|foot-extra|wezterm)
-        TERM=xterm-256color exec "${REAL_SSH[@]}" "${ARGS[@]}"
-        ;;
-    *)
-        exec "${REAL_SSH[@]}" "${ARGS[@]}"
-        ;;
-esac
+# Client-side TERM compatibility: send a universal TERM to servers that may
+# not have definitions for modern local terminals.
+lsh_exec_ssh "${REAL_SSH[0]}" "${ARGS[@]}"

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Marks the point where Mosh has completed its SSH bootstrap and is handing
+# control to the UDP client. Used by the staged transport to distinguish an
+# initial Mosh failure from the later end of an established session.
+
+if [[ -z ${LSH_MOSH_CLIENT:-} || ! -x ${LSH_MOSH_CLIENT:-} ]]; then
+    echo "lsh: could not find the real mosh-client" >&2
+    exit 127
+fi
+
+# The Mosh launcher invokes its client with -c before SSH merely to count
+# terminal colors. Only the later client invocation means bootstrap succeeded.
+if [[ ${1:-} != -c && -n ${LSH_TMUX_SESSION:-} ]]; then
+    tmux set-option -t "$LSH_TMUX_SESSION" @lsh_mosh_started 1 2>/dev/null || true
+    tmux set-option -t "$LSH_TMUX_SESSION" @lsh_transport_started 1 2>/dev/null || true
+    if [[ -n ${TMUX_PANE:-} && -n ${LSH_TMUX_LABEL:-} ]]; then
+        tmux rename-window -t "$TMUX_PANE" "$LSH_TMUX_LABEL · mosh" 2>/dev/null || true
+    fi
+fi
+
+exec "$LSH_MOSH_CLIENT" "$@"

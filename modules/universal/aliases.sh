@@ -49,6 +49,19 @@ alias ksh='kitty +kitten ssh'
 alias fj='$TERMINAL'
 alias offload='nvidia-offload'
 
+# Mark connections typed in an interactive lushrc shell. The lsh binary still
+# shadows ssh for scripts, but smart tmux/Mosh routing is opt-in at this shell
+# boundary so PTY-based automation keeps normal SSH semantics.
+if [[ $- == *i* ]]; then
+    lsh() {
+        LSH_INTERACTIVE_SHELL=1 command "$BASHRC/bin/lsh" "$@"
+    }
+
+    ssh() {
+        LSH_INTERACTIVE_SHELL=1 command "$BASHRC/bin/lsh" "$@"
+    }
+fi
+
 # Add an "alert" alias for long running commands.  Use like so:
 #   sleep 10; alert
 alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
