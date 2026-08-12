@@ -75,7 +75,7 @@ fi
 #--[ENSURE KITTY TERMINFO]---------------------
 
 if ! infocmp xterm-kitty &>/dev/null; then
-    if ! sat install kitty-terminfo:sys 2>/dev/null; then
+    if ! sat install kitty-terminfo 2>/dev/null; then
         export TERM=xterm-256color
     fi
 fi
