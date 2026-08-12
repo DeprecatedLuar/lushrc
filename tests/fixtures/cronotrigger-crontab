@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+STORE="${CRONOTRIGGER_TEST_CRONTAB:?CRONOTRIGGER_TEST_CRONTAB is required}"
+
+case "${1:-}" in
+    -l)
+        if [[ -f "$STORE" ]]; then
+            cat "$STORE"
+        else
+            echo "no crontab for test" >&2
+            exit 1
+        fi
+        ;;
+    "")
+        echo "usage: crontab [-l] file" >&2
+        exit 1
+        ;;
+    *)
+        if [[ "${CRONOTRIGGER_TEST_FAIL_INSTALL:-false}" == true ]]; then
+            echo "simulated crontab install failure" >&2
+            exit 1
+        fi
+        cp "$1" "$STORE"
+        ;;
+esac

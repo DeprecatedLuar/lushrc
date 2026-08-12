@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+FILE="${1:?file is required}"
+TEMP="${FILE}.edited"
+
+if [[ -n "${CRONOTRIGGER_TEST_EXPECTED_NAME:-}" ]]; then
+    grep -Fqx "name=$CRONOTRIGGER_TEST_EXPECTED_NAME" "$FILE"
+fi
+
+if [[ -n "${CRONOTRIGGER_TEST_FILE_CONTENT:-}" ]]; then
+    printf '%s\n' "$CRONOTRIGGER_TEST_FILE_CONTENT" > "$FILE"
+    exit 0
+fi
+
+REPLACEMENT="${CRONOTRIGGER_TEST_REPLACEMENT:?CRONOTRIGGER_TEST_REPLACEMENT is required}"
+
+awk -v replacement="$REPLACEMENT" '
+    /^command=/ { print "command=" replacement; next }
+    { print }
+' "$FILE" > "$TEMP"
+mv "$TEMP" "$FILE"
