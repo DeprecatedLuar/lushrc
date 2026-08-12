@@ -364,6 +364,7 @@ lsh_stage_connection() {
         \; set-option -w -t "$target" window-status-current-format "$status_format" \
         \; set-option -t "$session" @lsh_managed 1 \
         \; set-option -t "$session" @lsh_target "$connection_target" \
+        \; set-option -t "$session" status-left "" \
         \; set-option -t "$session" status-right "$latency_format" \
         \; set-option -t "$session" status-right-length 12 \
         \; set-option -t "$session" status-interval 5 \
