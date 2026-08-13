@@ -5,8 +5,33 @@
 #        cb image.png             # copy file (MIME-aware)
 #        cb "some text"           # copy literal text
 
+_is_remote_session() {
+    [[ -n "$SSH_TTY" || -n "$SSH_CONNECTION" || -n "$SSH_CLIENT" || -n "$MOSH_CONNECTION" ]]
+}
+
+# OSC 52 copies to the clipboard of the terminal emulator on the far end of
+# the SSH/mosh link (i.e. the real machine), not this host's local clipboard.
+_osc52_copy() {
+    local data
+    data=$(base64 -w0) || return 1
+    local osc=$'\033]52;c;'"${data}"$'\a'
+    if [[ -n "$TMUX" ]]; then
+        printf '\033Ptmux;\033%s\033\\' "$osc" > /dev/tty
+    else
+        printf '%s' "$osc" > /dev/tty
+    fi
+}
+
 _copy() {
     local mime="${1:-}"
+    if _is_remote_session && [[ -w /dev/tty ]]; then
+        if [[ -n "$mime" && "$mime" != text/* ]]; then
+            echo "cb: OSC52 (remote clipboard) only supports text, not $mime" >&2
+            return 1
+        fi
+        _osc52_copy
+        return $?
+    fi
     if [[ -n "$WAYLAND_DISPLAY" ]]; then
         if [[ -n "$mime" ]]; then
             wl-copy --type "$mime"

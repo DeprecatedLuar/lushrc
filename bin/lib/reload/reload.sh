@@ -75,9 +75,7 @@ fi
 #--[ENSURE KITTY TERMINFO]---------------------
 
 if ! infocmp xterm-kitty &>/dev/null; then
-    if ! sat install kitty-terminfo 2>/dev/null; then
-        export TERM=xterm-256color
-    fi
+    export TERM=xterm-256color
 fi
 
 #--[REFRESH COMMAND HASH]-----------------------
