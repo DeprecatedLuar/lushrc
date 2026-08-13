@@ -2,21 +2,24 @@
 # gobuild - portable go build: static (CGO_ENABLED=0), stripped, cross-arch aware
 #
 # Usage:
-#   gobuild [pkg] [arch] [-o output]
+#   gobuild [root] [arch] [-o output]
 #
-#   pkg     package path to build (default: auto-resolved, see below)
+#   root    path to the go project root (default: .)
+#           package to build is auto-resolved under it, see below
 #   arch    amd64 | arm64 (default: native GOARCH)
-#   -o      output binary path (default: ./<pwd-basename>)
+#   -o      output binary path (default: <root>/bin/<name>, else <root>/../bin/<name>, else <root>/<name>)
 #
-# Package resolution when [pkg] is omitted:
-#   1. ./main.go                       (root package)
-#   2. ./cmd/<basename of pwd>/main.go (cmd dir matching repo name)
-#   3. the single subdir under ./cmd/  (only if exactly one exists)
-#   otherwise: fail and list what's under ./cmd/ so you can pass it explicitly
+# Package resolution under <root>:
+#   1. <root>/main.go                        (root package)
+#   2. <root>/cmd/<basename of root>/main.go  (cmd dir matching repo name)
+#   3. the single subdir under <root>/cmd/    (only if exactly one exists)
+#   4. recursive search for the single main.go under <root>
+#      (searched from <root>/.. instead when root's basename is "bin")
+#   otherwise: fail and list matches so you can pass a package explicitly
 
 set -euo pipefail
 
-pkg=""
+root="."
 arch="$(go env GOARCH)"
 output=""
 
@@ -31,41 +34,89 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            pkg="$1"
+            root="${1%/}"
             shift
             ;;
     esac
 done
 
-if [[ -z "$pkg" ]]; then
-    name="$(basename "$PWD")"
-    if [[ -f "./main.go" ]]; then
-        pkg="."
-    elif [[ -f "./cmd/$name/main.go" ]]; then
-        pkg="./cmd/$name"
-    elif [[ -d "./cmd" ]]; then
-        subdirs=(./cmd/*/)
-        if [[ ${#subdirs[@]} -eq 1 ]]; then
-            pkg="${subdirs[0]%/}"
-        else
-            echo "gobuild: can't resolve package — multiple dirs under ./cmd/:" >&2
-            printf '  %s\n' "${subdirs[@]%/}" >&2
-            echo "pass one explicitly: gobuild ./cmd/<name>" >&2
-            exit 1
-        fi
+name="$(basename "$(cd "$root" && pwd)")"
+
+if [[ -f "$root/main.go" ]]; then
+    pkg="$root"
+elif [[ -f "$root/cmd/$name/main.go" ]]; then
+    pkg="$root/cmd/$name"
+elif [[ -d "$root/cmd" ]]; then
+    subdirs=("$root"/cmd/*/)
+    if [[ ${#subdirs[@]} -eq 1 ]]; then
+        pkg="${subdirs[0]%/}"
     else
-        echo "gobuild: no ./main.go and no ./cmd/ dir — pass a package path explicitly" >&2
+        echo "gobuild: can't resolve package — multiple dirs under $root/cmd/:" >&2
+        printf '  %s\n' "${subdirs[@]%/}" >&2
+        echo "pass one explicitly: gobuild $root/cmd/<name>" >&2
+        exit 1
+    fi
+else
+    search_root="$root"
+    [[ "$name" == "bin" && -d "$root/.." ]] && search_root="$root/.."
+
+    mains=()
+    while IFS= read -r -d '' f; do
+        mains+=("$f")
+    done < <(find "$search_root" \( -name node_modules -o -name vendor -o -name .git \) -prune -o -name main.go -print0)
+
+    if [[ ${#mains[@]} -eq 1 ]]; then
+        pkg="$(dirname "${mains[0]}")"
+    elif [[ ${#mains[@]} -eq 0 ]]; then
+        echo "gobuild: no main.go found under $search_root — pass a package path explicitly" >&2
+        exit 1
+    else
+        echo "gobuild: can't resolve package — multiple main.go found under $search_root:" >&2
+        printf '  %s\n' "${mains[@]}" >&2
+        echo "pass one explicitly: gobuild <path/to/pkg>" >&2
         exit 1
     fi
 fi
 
 if [[ -z "$output" ]]; then
-    if [[ "$pkg" == "." ]]; then
-        output="./$(basename "$PWD")"
+    if [[ "$pkg" == "$root" ]]; then
+        pkgname="$name"
     else
-        output="./$(basename "$pkg")"
+        pkgname="$(basename "$pkg")"
     fi
+
+    if [[ -d "$root/bin" ]]; then
+        bindir="$root/bin"
+    elif [[ -d "$root/../bin" ]]; then
+        bindir="$root/../bin"
+    else
+        bindir="$root"
+    fi
+    output="$bindir/$pkgname"
 fi
 
-echo "gobuild: GOARCH=$arch pkg=$pkg -o $output" >&2
-CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w" -o "$output" "$pkg"
+# go.mod is looked up from the process's cwd, not from the package path, so
+# when $pkg lives outside the caller's directory tree (e.g. gobuild ../backend)
+# we must -C into the module root or `go build` can't find go.mod at all.
+abspkg="$(cd "$pkg" && pwd)"
+modroot="$abspkg"
+while [[ ! -f "$modroot/go.mod" && "$modroot" != "/" ]]; do
+    modroot="$(dirname "$modroot")"
+done
+if [[ ! -f "$modroot/go.mod" ]]; then
+    echo "gobuild: no go.mod found above $abspkg" >&2
+    exit 1
+fi
+
+if [[ "$abspkg" == "$modroot" ]]; then
+    pkgrel="."
+else
+    pkgrel="./${abspkg#"$modroot"/}"
+fi
+
+mkdir -p "$(dirname "$output")"
+outdir="$(cd "$(dirname "$output")" && pwd)"
+absoutput="$outdir/$(basename "$output")"
+
+echo "gobuild: GOARCH=$arch pkg=$pkgrel (root=$modroot) -o $absoutput" >&2
+CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go -C "$modroot" build -ldflags="-s -w" -o "$absoutput" "$pkgrel"

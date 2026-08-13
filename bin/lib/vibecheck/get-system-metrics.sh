@@ -57,11 +57,20 @@ for metric in "${metrics[@]}"; do
             ;;
         ram)
             if [[ ${#metrics[@]} -eq 1 ]]; then
-                LC_ALL=C free -h | awk '/^Mem:/ {
-                    total=$2; used=$3; free=$4; available=$7
-                    printf "RAM %.0f%% (%s / %s)\n", ($3/$2*100), used, total
-                    printf "Used: %s | Free: %s | Available: %s\n", used, free, available
-                }' RS='\n' FS='[[:space:]]+'
+                LC_ALL=C free -b | awk '/^Mem:/ {
+                    bytes_per_gib = 1024 * 1024 * 1024
+                    percent = 100
+                    total = $2
+                    free = $4
+                    cache = $6
+                    available = $7
+                    used = total - free - cache
+
+                    printf "RAM %.0f%% used (%.1fGi)\n", \
+                        used / total * percent, used / bytes_per_gib
+                    printf "  %.0f%% cache | %.0f%% free | %.1fGi available\n", \
+                        cache / total * percent, free / total * percent, available / bytes_per_gib
+                }' FS='[[:space:]]+'
                 echo ""
 
                 if [[ "$show_all" == true ]]; then
@@ -83,7 +92,11 @@ for metric in "${metrics[@]}"; do
                     }'
                 fi
             else
-                LC_ALL=C free | awk '/^Mem:/ {printf "RAM %.0f%%\n", $3/$2*100}'
+                LC_ALL=C free | awk '/^Mem:/ {
+                    percent = 100
+                    used = $2 - $4 - $6
+                    printf "RAM %.0f%%\n", used / $2 * percent
+                }'
             fi
             ;;
         gpu)

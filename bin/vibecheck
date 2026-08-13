@@ -44,7 +44,7 @@ case "${1:-}" in
         "$LIB_DIR/get-hardware-info.sh" "$@"
         ;;
     "")
-        "$LIB_DIR/get-system-metrics.sh"
+        "$LIB_DIR/get-system-metrics.sh" | "$LIB_DIR/align-metrics.sh"
         ;;
     *)
         if [[ "$1" =~ ^[0-9]+$ ]]; then
