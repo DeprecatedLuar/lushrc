@@ -2,11 +2,6 @@
 
 CRONOTRIGGER_DEFAULT_EVERY="day"
 CRONOTRIGGER_DEFAULT_TIME="09:00"
-CRONOTRIGGER_STATUS_ENABLED="enabled"
-CRONOTRIGGER_STATUS_DISABLED="disabled"
-CRONOTRIGGER_STATUS_INVALID="invalid"
-CRONOTRIGGER_DIM=$'\033[2m'
-CRONOTRIGGER_RESET=$'\033[0m'
 
 cronotrigger_open_editor() {
     local path="$1" editor_value
@@ -16,6 +11,19 @@ cronotrigger_open_editor() {
     read -r -a editor_command <<< "$editor_value"
     ((${#editor_command[@]} > 0)) || editor_command=(vi)
     "${editor_command[@]}" "$path"
+}
+
+cronotrigger_recover_draft() {
+    local temp="$1" name="$2" verb="$3"
+
+    if [[ -n "$name" ]]; then
+        cronotrigger_stash_draft "$temp" "$name"
+        rm -f -- "$temp"
+        echo "cronotrigger: draft kept; run 'cronotrigger $verb $name' to fix it and continue" >&2
+    else
+        rm -f -- "$temp"
+        echo "cronotrigger: fix the error above and try again" >&2
+    fi
 }
 
 cronotrigger_reconcile_or_rollback() {
@@ -32,7 +40,7 @@ cronotrigger_reconcile_or_rollback() {
 }
 
 cronotrigger_cmd_add() {
-    local name="" initial_name="" path temp direct=false
+    local name="" initial_name="" path temp="" draft_path="" direct=false
     local every="" time_value="" command_value=""
 
     if (($# > 0)) && [[ "$1" != --* ]]; then
@@ -77,34 +85,45 @@ cronotrigger_cmd_add() {
         JOB_COMMAND="$command_value"
     else
         temp=$(mktemp "$CRONOTRIGGER_RUNTIME_DIR/add.XXXXXX") || return 1
-        {
-            printf 'name=%s\n' "$initial_name"
-            printf 'every=%s\n' "$CRONOTRIGGER_DEFAULT_EVERY"
-            printf 'time=%s\n' "$CRONOTRIGGER_DEFAULT_TIME"
-            printf 'command=\n'
-        } > "$temp"
+        [[ -n "$initial_name" ]] && draft_path="$(cronotrigger_draft_path "$initial_name")"
+        if [[ -n "$draft_path" && -f "$draft_path" ]]; then
+            cp -- "$draft_path" "$temp"
+            echo "cronotrigger: resuming draft for '$initial_name' from a previous failed attempt" >&2
+        else
+            {
+                printf 'name=%s\n' "$initial_name"
+                printf 'every=%s\n' "$CRONOTRIGGER_DEFAULT_EVERY"
+                printf 'time=%s\n' "$CRONOTRIGGER_DEFAULT_TIME"
+                printf 'command=\n'
+            } > "$temp"
+        fi
         if ! cronotrigger_open_editor "$temp"; then
             rm -f -- "$temp"
             echo "cronotrigger: editor exited with an error" >&2
             return 1
         fi
-        if ! cronotrigger_load_job "$temp" true; then
-            rm -f -- "$temp"
+        if ! cronotrigger_load_job "$temp" true "${initial_name:-new job}"; then
+            cronotrigger_recover_draft "$temp" "${JOB_NAME:-$initial_name}" add
             return 1
         fi
         name="$JOB_NAME"
-        rm -f -- "$temp"
     fi
 
-    [[ -n "$name" ]] || { echo "cronotrigger: name is required" >&2; return 1; }
-    cronotrigger_validate_name "$name" || return 1
+    [[ -n "$name" ]] || { echo "cronotrigger: name is required" >&2; [[ -z "$temp" ]] || rm -f -- "$temp"; return 1; }
+    cronotrigger_validate_name "$name" || { [[ -z "$temp" ]] || rm -f -- "$temp"; return 1; }
     path="$(cronotrigger_job_path "$name")"
-    [[ ! -e "$path" ]] || {
+    if [[ -e "$path" ]]; then
         echo "cronotrigger: job '$name' already exists" >&2
+        [[ -z "$temp" ]] || rm -f -- "$temp"
         return 1
-    }
+    fi
 
-    cronotrigger_finalize_job true || return 1
+    if ! cronotrigger_finalize_job true; then
+        [[ -z "$temp" ]] || cronotrigger_recover_draft "$temp" "$name" add
+        return 1
+    fi
+    [[ -z "$temp" ]] || rm -f -- "$temp"
+    cronotrigger_discard_draft "$name"
     cronotrigger_write_job "$path" || return 1
     if ! cronotrigger_set_enabled "$name" true; then
         rm -f -- "$path"
@@ -122,7 +141,7 @@ cronotrigger_cmd_add() {
 }
 
 cronotrigger_cmd_edit() {
-    local name="${1:-}" path temp backup old_every old_time regenerate=false
+    local name="${1:-}" path temp backup draft_path old_every old_time regenerate=false
 
     [[ -n "$name" && $# -eq 1 ]] || { echo "Usage: cronotrigger edit <name>" >&2; return 1; }
     cronotrigger_validate_name "$name" || return 1
@@ -138,24 +157,34 @@ cronotrigger_cmd_edit() {
 
     temp=$(mktemp "$CRONOTRIGGER_RUNTIME_DIR/edit.XXXXXX") || return 1
     backup=$(mktemp "$CRONOTRIGGER_RUNTIME_DIR/backup.XXXXXX") || { rm -f -- "$temp"; return 1; }
-    cp "$path" "$temp"
     cp "$path" "$backup"
+
+    draft_path="$(cronotrigger_draft_path "$name")"
+    if [[ -f "$draft_path" ]]; then
+        cp -- "$draft_path" "$temp"
+        echo "cronotrigger: resuming draft for '$name' from a previous failed attempt" >&2
+    else
+        cp "$path" "$temp"
+    fi
 
     if ! cronotrigger_open_editor "$temp"; then
         rm -f -- "$temp" "$backup"
         echo "cronotrigger: editor exited with an error" >&2
         return 1
     fi
-    if ! cronotrigger_load_job "$temp"; then
-        rm -f -- "$temp" "$backup"
+    if ! cronotrigger_load_job "$temp" false "$name"; then
+        cronotrigger_recover_draft "$temp" "$name" edit
+        rm -f -- "$backup"
         return 1
     fi
     [[ "$JOB_EVERY" != "$old_every" || "$JOB_TIME" != "$old_time" ]] && regenerate=true
     if ! cronotrigger_finalize_job "$regenerate"; then
-        rm -f -- "$temp" "$backup"
+        cronotrigger_recover_draft "$temp" "$name" edit
+        rm -f -- "$backup"
         return 1
     fi
     rm -f -- "$temp"
+    cronotrigger_discard_draft "$name"
     cronotrigger_write_job "$path" || { rm -f -- "$backup"; return 1; }
 
     cronotrigger_rollback_edit() {
@@ -171,36 +200,28 @@ cronotrigger_cmd_edit() {
 }
 
 cronotrigger_cmd_list() {
-    local name path status schedule command_value found=false prefix="" suffix=""
+    local name found=false dim="" reset=""
+    local -a enabled_names=() disabled_names=()
 
-    printf '%-24s %-10s %-24s %s\n' NAME STATUS SCHEDULE COMMAND
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+        dim=$'\033[2m'
+        reset=$'\033[0m'
+    fi
+
     while IFS= read -r name; do
         found=true
-        path="$(cronotrigger_job_path "$name")"
-        status="$CRONOTRIGGER_STATUS_DISABLED"
-        cronotrigger_is_enabled "$name" && status="$CRONOTRIGGER_STATUS_ENABLED"
-
-        if cronotrigger_validate_name "$name" >/dev/null 2>&1 && \
-            cronotrigger_load_job "$path" >/dev/null 2>&1 && \
-            cronotrigger_validate_job >/dev/null 2>&1; then
-            schedule="$(cronotrigger_schedule_description)"
-            command_value="$JOB_COMMAND"
+        if cronotrigger_is_enabled "$name"; then
+            enabled_names+=("$name")
         else
-            status="$CRONOTRIGGER_STATUS_INVALID"
-            schedule="-"
-            command_value="-"
+            disabled_names+=("$name")
         fi
-
-        prefix=""
-        suffix=""
-        if [[ "$status" == "$CRONOTRIGGER_STATUS_DISABLED" && -t 1 && -z "${NO_COLOR:-}" ]]; then
-            prefix="$CRONOTRIGGER_DIM"
-            suffix="$CRONOTRIGGER_RESET"
-        fi
-        printf '%s%-24s %-10s %-24s %s%s\n' "$prefix" "$name" "$status" "$schedule" "$command_value" "$suffix"
     done < <(cronotrigger_job_names)
 
-    $found || echo "No jobs."
+    $found || { echo "No jobs."; return 0; }
+
+    local n
+    for n in "${enabled_names[@]}"; do printf '%s\n' "$n"; done
+    for n in "${disabled_names[@]}"; do printf '%s%s%s\n' "$dim" "$n" "$reset"; done
 }
 
 cronotrigger_cmd_set_enabled() {
@@ -344,5 +365,11 @@ through PATH. Job files accept no other keys.
 Every user-facing invocation validates the job store and reconciles its managed
 crontab block. New jobs are enabled by default. Manually created .job files are
 disabled until explicitly enabled.
+
+Recovering a broken edit:
+  If a syntax or validation error is found when the editor closes, nothing is
+  written and the draft is kept (under $XDG_RUNTIME_DIR, cleared on reboot).
+  Run the same 'add <name>' or 'edit <name>' command again to reopen it with
+  your changes intact and fix the error. A successful save discards the draft.
 EOF
 }

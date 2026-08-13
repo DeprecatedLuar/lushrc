@@ -50,13 +50,14 @@ cronotrigger_reset_job() {
 cronotrigger_load_job() {
     local path="$1"
     local allow_name="${2:-false}"
+    local display="${3:-$path}"
     local line line_number=0 key value
     local seen_name=false seen_every=false seen_time=false seen_anchor=false
     local seen_command=false
 
     cronotrigger_reset_job
     [[ -f "$path" ]] || {
-        echo "cronotrigger: job file not found: $path" >&2
+        echo "cronotrigger: job file not found: $display" >&2
         return 1
     }
 
@@ -66,7 +67,7 @@ cronotrigger_load_job() {
         [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
 
         if [[ "$line" != *"="* ]]; then
-            echo "cronotrigger: $path:$line_number: expected key=value" >&2
+            echo "cronotrigger: $display:$line_number: expected key=value" >&2
             return 1
         fi
 
@@ -76,39 +77,60 @@ cronotrigger_load_job() {
         case "$key" in
             name)
                 if [[ "$allow_name" != true ]]; then
-                    echo "cronotrigger: $path:$line_number: name is only valid in a new-job draft" >&2
+                    echo "cronotrigger: $display:$line_number: name is only valid in a new-job draft" >&2
                     return 1
                 fi
-                $seen_name && { echo "cronotrigger: $path:$line_number: duplicate key 'name'" >&2; return 1; }
+                $seen_name && { echo "cronotrigger: $display:$line_number: duplicate key 'name'" >&2; return 1; }
                 JOB_NAME="$value"
                 seen_name=true
                 ;;
             every)
-                $seen_every && { echo "cronotrigger: $path:$line_number: duplicate key 'every'" >&2; return 1; }
+                $seen_every && { echo "cronotrigger: $display:$line_number: duplicate key 'every'" >&2; return 1; }
                 JOB_EVERY="$value"
                 seen_every=true
                 ;;
             time)
-                $seen_time && { echo "cronotrigger: $path:$line_number: duplicate key 'time'" >&2; return 1; }
+                $seen_time && { echo "cronotrigger: $display:$line_number: duplicate key 'time'" >&2; return 1; }
                 JOB_TIME="$value"
                 seen_time=true
                 ;;
             anchor)
-                $seen_anchor && { echo "cronotrigger: $path:$line_number: duplicate key 'anchor'" >&2; return 1; }
+                $seen_anchor && { echo "cronotrigger: $display:$line_number: duplicate key 'anchor'" >&2; return 1; }
                 JOB_ANCHOR="$value"
                 seen_anchor=true
                 ;;
             command)
-                $seen_command && { echo "cronotrigger: $path:$line_number: duplicate key 'command'" >&2; return 1; }
+                $seen_command && { echo "cronotrigger: $display:$line_number: duplicate key 'command'" >&2; return 1; }
                 JOB_COMMAND="$value"
                 seen_command=true
                 ;;
             *)
-                echo "cronotrigger: $path:$line_number: unknown key '$key'" >&2
+                echo "cronotrigger: $display:$line_number: unknown key '$key'" >&2
                 return 1
                 ;;
         esac
     done < "$path"
+}
+
+cronotrigger_draft_path() {
+    printf '%s/%s%s\n' "$CRONOTRIGGER_DRAFT_DIR" "$1" "$CRONOTRIGGER_JOB_SUFFIX"
+}
+
+cronotrigger_stash_draft() {
+    local temp="$1" name="$2"
+
+    [[ -n "$name" ]] || return 0
+    cronotrigger_validate_name "$name" >/dev/null 2>&1 || return 0
+    mkdir -p "$CRONOTRIGGER_DRAFT_DIR" 2>/dev/null || return 0
+    cp -- "$temp" "$(cronotrigger_draft_path "$name")" 2>/dev/null || return 0
+    chmod 600 "$(cronotrigger_draft_path "$name")" 2>/dev/null || true
+}
+
+cronotrigger_discard_draft() {
+    local name="$1"
+
+    [[ -n "$name" ]] || return 0
+    rm -f -- "$(cronotrigger_draft_path "$name")" 2>/dev/null || true
 }
 
 cronotrigger_write_job() {

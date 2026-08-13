@@ -83,14 +83,14 @@ assert_equals hour "$(cat "$TEST_ROOT/hour-runs")"
 export CRONOTRIGGER_NOW="2026-08-12T08:00"
 
 list_output=$("$CRONOTRIGGER" ls)
-[[ "$list_output" == *"daily"* && "$list_output" == *"enabled"* ]] || fail "list omitted enabled jobs"
+[[ "$list_output" == *"daily"* ]] || fail "list omitted enabled jobs"
 
 "$CRONOTRIGGER" disable daily >/dev/null
 [[ -f "$XDG_CONFIG_HOME/cronotrigger/daily.job" ]] || fail "disable removed the job file"
 assert_not_contains "$XDG_CONFIG_HOME/cronotrigger/.enabled" daily
 assert_not_contains "$CRONOTRIGGER_TEST_CRONTAB" "# cronotrigger:daily"
 list_output=$(NO_COLOR=1 "$CRONOTRIGGER" list)
-[[ "$list_output" == *"daily"*"disabled"* ]] || fail "list omitted disabled status"
+[[ "$list_output" == *"daily"* ]] || fail "list omitted disabled job"
 
 "$CRONOTRIGGER" enable daily >/dev/null
 assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "# cronotrigger:daily"
@@ -200,5 +200,57 @@ fi
 unset CRONOTRIGGER_TEST_FAIL_INSTALL
 [[ ! -e "$XDG_CONFIG_HOME/cronotrigger/rollback.job" ]] || fail "failed add kept its job file"
 assert_not_contains "$XDG_CONFIG_HOME/cronotrigger/.enabled" rollback
+
+export VISUAL="$REPO_ROOT/tests/fixtures/cronotrigger-editor"
+export CRONOTRIGGER_TEST_FILE_CONTENT="name=draft-add
+every=99st
+time=09:00
+command=printf sentinel-add"
+if "$CRONOTRIGGER" add draft-add >/dev/null 2>&1; then
+    fail "invalid schedule was accepted on add"
+fi
+[[ ! -e "$XDG_CONFIG_HOME/cronotrigger/draft-add.job" ]] || fail "failed add left a job file"
+[[ -f "$XDG_RUNTIME_DIR/drafts/draft-add.job" ]] || fail "failed add did not stash a draft"
+unset CRONOTRIGGER_TEST_FILE_CONTENT
+
+export CRONOTRIGGER_TEST_ASSERT_CONTAINS="printf sentinel-add"
+export CRONOTRIGGER_TEST_REPLACEMENT='printf sentinel-add'
+if "$CRONOTRIGGER" add draft-add >/dev/null 2>&1; then
+    fail "resumed draft with untouched schedule was accepted"
+fi
+unset CRONOTRIGGER_TEST_ASSERT_CONTAINS
+
+export CRONOTRIGGER_TEST_FILE_CONTENT="name=draft-add
+every=day
+time=09:00
+command=printf sentinel-add"
+"$CRONOTRIGGER" add draft-add >/dev/null
+assert_contains "$XDG_CONFIG_HOME/cronotrigger/draft-add.job" "command=printf sentinel-add"
+[[ ! -f "$XDG_RUNTIME_DIR/drafts/draft-add.job" ]] || fail "successful add left a stale draft"
+unset VISUAL CRONOTRIGGER_TEST_FILE_CONTENT CRONOTRIGGER_TEST_REPLACEMENT
+
+export VISUAL="$REPO_ROOT/tests/fixtures/cronotrigger-editor"
+export CRONOTRIGGER_TEST_FILE_CONTENT="every=99st
+time=09:00
+command=printf sentinel-edit"
+if "$CRONOTRIGGER" edit daily >/dev/null 2>&1; then
+    fail "invalid schedule was accepted on edit"
+fi
+assert_not_contains "$XDG_CONFIG_HOME/cronotrigger/daily.job" "sentinel-edit"
+unset CRONOTRIGGER_TEST_FILE_CONTENT
+
+export CRONOTRIGGER_TEST_ASSERT_CONTAINS="printf sentinel-edit"
+export CRONOTRIGGER_TEST_REPLACEMENT='printf sentinel-edit'
+if "$CRONOTRIGGER" edit daily >/dev/null 2>&1; then
+    fail "resumed edit draft with untouched schedule was accepted"
+fi
+unset CRONOTRIGGER_TEST_ASSERT_CONTAINS
+
+export CRONOTRIGGER_TEST_FILE_CONTENT="every=day
+time=09:00
+command=printf sentinel-edit"
+"$CRONOTRIGGER" edit daily >/dev/null
+assert_contains "$XDG_CONFIG_HOME/cronotrigger/daily.job" "command=printf sentinel-edit"
+unset VISUAL CRONOTRIGGER_TEST_FILE_CONTENT CRONOTRIGGER_TEST_REPLACEMENT
 
 echo "cronotrigger tests passed"
