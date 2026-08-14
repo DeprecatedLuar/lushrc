@@ -73,7 +73,8 @@ expand_index() {
         w/*)   echo "$WORKSPACE/${1#w/}" ;;
         t/*)   echo "$TOOLS/${1#t/}" ;;
         c/*)   echo "$HOME/.config/${1#c/}" ;;
-        b/*)   echo "$HOME/bin/${1#b/}" ;;
+        b/*|bin/*)   echo "$HOME/bin/${1#*/}" ;;
+        s/*|serv/*|ser/*) echo "$SERVICES_DIR/${1#*/}" ;;
         sb/*)  echo "/usr/local/bin/${1#sb/}" ;;
         lb/*)  echo "$HOME/.local/bin/${1#lb/}" ;;
         d/*)   echo "$HOME/Downloads/${1#d/}" ;;
@@ -96,13 +97,13 @@ expand_index() {
         boot/*) echo "/boot/${1#boot/}" ;;
         mnt/*) echo "/mnt/${1#mnt/}" ;;
         root/*) echo "/root/${1#root/}" ;;
-        bin/*) echo "/bin/${1#bin/}" ;;
         sbin/*) echo "/sbin/${1#sbin/}" ;;
         lib/*) echo "/lib/${1#lib/}" ;;
         w)     echo "$WORKSPACE" ;;
         t)     echo "$TOOLS" ;;
         c)     echo "$HOME/.config" ;;
-        b)     echo "$HOME/bin" ;;
+        b|bin) echo "$HOME/bin" ;;
+        s|serv|ser) echo "$SERVICES_DIR" ;;
         sb)    echo "/usr/local/bin" ;;
         lb)    echo "$HOME/.local/bin" ;;
         d)     echo "$HOME/Downloads" ;;
@@ -125,7 +126,6 @@ expand_index() {
         boot)  echo "/boot" ;;
         mnt)   echo "/mnt" ;;
         root)  echo "/root" ;;
-        bin)   echo "/bin" ;;
         sbin)  echo "/sbin" ;;
         lib)   echo "/lib" ;;
         *)     echo "$1" ;;
