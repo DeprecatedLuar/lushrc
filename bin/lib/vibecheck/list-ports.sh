@@ -33,5 +33,5 @@ lsof -i -P -n | awk 'NR>1 && /LISTEN/ {
         name=$(resolve_docker_name "$port")
         [[ -n "$name" ]] && proc="$name"
     fi
-    echo "$port ($proc)"
+    printf '%5s (%s)\n' "$port" "$proc"
 done
