@@ -3,46 +3,24 @@
 DOCK_DIR="${TMPDIR:-/tmp}/dock"
 LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
 source "$LIBDIR/shared/net.sh"
+source "$LIBDIR/shared/ssh-conn.sh"
 source "$LIBDIR/shared/spinner.sh"
 
-# --- Normalize SSH connection args ---
-# Accepts: [-p PORT] [-l USER] [user@]host[:port]
-# Outputs: CONN_USER, CONN_HOST, CONN_PORT
-
-CONN_USER=""
-CONN_HOST=""
-CONN_PORT=""
-FLAG_PORT=""
+# --- Parse arguments ---
+# Accepts: [-p PORT] [-l USER] [user@]host[:port] [remote_path]
+CONN_SPEC=""
 REMOTE_PATH=""
+FLAG_USER=""
+FLAG_PORT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -p) FLAG_PORT="$2"; shift 2 ;;
-        -l) CONN_USER="$2"; shift 2 ;;
-        -*) echo "Unknown option: $1"; exit 1 ;;
+        -l) FLAG_USER="$2"; shift 2 ;;
+        -*) echo "Unknown option: $1" >&2; exit 1 ;;
         *)
-            if [[ -z "$CONN_HOST" ]]; then
-                local_input="$1"
-
-                # Split user@host:port
-                if [[ "$local_input" == *@* ]]; then
-                    CONN_USER="${local_input%%@*}"
-                    local_input="${local_input#*@}"
-                fi
-
-                # Split host:port
-                if [[ "$local_input" == *:* ]]; then
-                    COLON_PORT="${local_input##*:}"
-                    CONN_HOST="${local_input%:*}"
-
-                    if [[ -n "$FLAG_PORT" && "$FLAG_PORT" != "$COLON_PORT" ]]; then
-                        echo "Error: conflicting ports (-p $FLAG_PORT vs :$COLON_PORT)"
-                        exit 1
-                    fi
-                    CONN_PORT="$COLON_PORT"
-                else
-                    CONN_HOST="$local_input"
-                fi
+            if [[ -z "$CONN_SPEC" ]]; then
+                CONN_SPEC="$1"
             else
                 REMOTE_PATH="$1"
             fi
@@ -51,19 +29,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -n "$FLAG_PORT" && -z "$CONN_PORT" ]] && CONN_PORT="$FLAG_PORT"
-
-if [[ -z "$CONN_HOST" ]]; then
+if [[ -z "$CONN_SPEC" ]]; then
     echo "Usage: dock [-p PORT] [-l USER] [user@]host[:port] [remote_path]"
     exit 1
 fi
 
-CONN_HOST=$(expand_local_ip "$CONN_HOST") || exit 1
-
-# --- Build SSH/SSHFS args ---
-SSH_ARGS=()
-[[ -n "$CONN_PORT" ]] && SSH_ARGS+=("-p" "$CONN_PORT")
-[[ -n "$CONN_USER" ]] && SSH_TARGET="$CONN_USER@$CONN_HOST" || SSH_TARGET="$CONN_HOST"
+parse_conn "$CONN_SPEC" "$FLAG_USER" "$FLAG_PORT" || exit 1
 
 printf "Docking %s..." "$CONN_HOST"
 
@@ -71,7 +42,7 @@ printf "Docking %s..." "$CONN_HOST"
 [[ -n "$REMOTE_PATH" ]] && REMOTE_PATH="${REMOTE_PATH/#$HOME/\~}"
 
 # --- Single SSH call: get home dir + hostname ---
-read -r REMOTE_HOME REMOTE_NAME < <(ssh "${SSH_ARGS[@]}" "$SSH_TARGET" 'echo $HOME $(hostname -s)' 2>/dev/null | tail -1)
+read -r REMOTE_HOME REMOTE_NAME < <(conn_ssh 'echo $HOME $(hostname -s)' 2>/dev/null | tail -1)
 
 if [[ -z "$REMOTE_HOME" ]]; then
     printf "\rCould not connect to %s\n" "$CONN_HOST"
@@ -110,7 +81,7 @@ fi
 mkdir -p "$DOCK_DIR" "$MOUNT_POINT"
 
 # --- Mount ---
-sshfs "${SSH_ARGS[@]}" "$SSH_TARGET:$MOUNT_PATH" "$MOUNT_POINT" \
+sshfs "${CONN_SSH_ARGS[@]}" "$CONN_TARGET:$MOUNT_PATH" "$MOUNT_POINT" \
     -o reconnect,ServerAliveInterval=15,ServerAliveCountMax=3 \
     -o follow_symlinks,auto_cache,idmap=user &
 

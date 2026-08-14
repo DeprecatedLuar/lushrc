@@ -6,6 +6,15 @@ reload() {
     $LIBDIR/reload/reload.sh "$@"
 }
 
+logout() {
+    if ! command -v loginctl &>/dev/null; then
+        echo "logout: loginctl is unavailable" >&2
+        return 1
+    fi
+
+    command loginctl terminate-session ""
+}
+
 alias deploy-noruelga='$BASHRC/bin/noruelga.sh'
 
 alias launcher='$LAUNCHER'

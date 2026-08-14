@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TEST_DIR/../../../.." && pwd)"
 CRONOTRIGGER="$REPO_ROOT/bin/cronotrigger"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cronotrigger-test.XXXXXX")"
 
@@ -17,7 +18,7 @@ export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_RUNTIME_DIR="$TEST_ROOT/runtime"
 export CRONOTRIGGER_LUSHRC_ROOT="$REPO_ROOT"
-export CRONOTRIGGER_CRONTAB_COMMAND="$REPO_ROOT/tests/fixtures/cronotrigger-crontab"
+export CRONOTRIGGER_CRONTAB_COMMAND="$TEST_DIR/fixtures/cronotrigger-crontab"
 export CRONOTRIGGER_TEST_CRONTAB="$TEST_ROOT/crontab"
 export CRONOTRIGGER_NOW="2026-08-12T08:00"
 mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
@@ -30,6 +31,11 @@ fail() {
 assert_contains() {
     local file="$1" expected="$2"
     grep -Fq -- "$expected" "$file" || fail "$file does not contain: $expected"
+}
+
+assert_line_equals() {
+    local file="$1" expected="$2"
+    grep -Fqx -- "$expected" "$file" || fail "$file does not contain exact line: $expected"
 }
 
 assert_not_contains() {
@@ -54,6 +60,12 @@ assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "# cronotrigger:daily"
 "$CRONOTRIGGER" add monthly \
     --every 1st,15th --time 10:30 --command 'printf monthly' >/dev/null
 assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "30 10 1,15 * *"
+
+printf 'every=day\ntime=11:00\ncommand=  printf preserved  \n' \
+    > "$XDG_CONFIG_HOME/cronotrigger/preserved-command.job"
+"$CRONOTRIGGER" enable preserved-command >/dev/null
+assert_line_equals "$XDG_CONFIG_HOME/cronotrigger/preserved-command.job" \
+    'command=  printf preserved  '
 
 "$CRONOTRIGGER" add interval \
     --every 6d --time 09:00 \
@@ -126,13 +138,13 @@ if "$CRONOTRIGGER" enable bad-working-directory >/dev/null 2>&1; then
     fail "removed working_directory key was accepted"
 fi
 
-export VISUAL="$REPO_ROOT/tests/fixtures/cronotrigger-editor"
+export VISUAL="$TEST_DIR/fixtures/cronotrigger-editor"
 export CRONOTRIGGER_TEST_REPLACEMENT='printf edited'
 "$CRONOTRIGGER" e daily >/dev/null
 assert_contains "$XDG_CONFIG_HOME/cronotrigger/daily.job" "command=printf edited"
 unset VISUAL CRONOTRIGGER_TEST_REPLACEMENT
 
-export VISUAL="$REPO_ROOT/tests/fixtures/cronotrigger-editor"
+export VISUAL="$TEST_DIR/fixtures/cronotrigger-editor"
 export CRONOTRIGGER_TEST_FILE_CONTENT="every=day
 time=14:00
 command=true"
@@ -140,7 +152,7 @@ command=true"
 assert_contains "$XDG_CONFIG_HOME/cronotrigger/broken.job" "every=day"
 unset VISUAL CRONOTRIGGER_TEST_FILE_CONTENT
 
-export VISUAL="$REPO_ROOT/tests/fixtures/cronotrigger-editor"
+export VISUAL="$TEST_DIR/fixtures/cronotrigger-editor"
 export CRONOTRIGGER_TEST_REPLACEMENT='printf from-editor'
 export CRONOTRIGGER_TEST_EXPECTED_NAME=editor-created
 "$CRONOTRIGGER" add editor-created >/dev/null
@@ -201,7 +213,7 @@ unset CRONOTRIGGER_TEST_FAIL_INSTALL
 [[ ! -e "$XDG_CONFIG_HOME/cronotrigger/rollback.job" ]] || fail "failed add kept its job file"
 assert_not_contains "$XDG_CONFIG_HOME/cronotrigger/.enabled" rollback
 
-export VISUAL="$REPO_ROOT/tests/fixtures/cronotrigger-editor"
+export VISUAL="$TEST_DIR/fixtures/cronotrigger-editor"
 export CRONOTRIGGER_TEST_FILE_CONTENT="name=draft-add
 every=99st
 time=09:00
@@ -229,7 +241,7 @@ assert_contains "$XDG_CONFIG_HOME/cronotrigger/draft-add.job" "command=printf se
 [[ ! -f "$XDG_RUNTIME_DIR/drafts/draft-add.job" ]] || fail "successful add left a stale draft"
 unset VISUAL CRONOTRIGGER_TEST_FILE_CONTENT CRONOTRIGGER_TEST_REPLACEMENT
 
-export VISUAL="$REPO_ROOT/tests/fixtures/cronotrigger-editor"
+export VISUAL="$TEST_DIR/fixtures/cronotrigger-editor"
 export CRONOTRIGGER_TEST_FILE_CONTENT="every=99st
 time=09:00
 command=printf sentinel-edit"

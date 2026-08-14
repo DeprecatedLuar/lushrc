@@ -51,16 +51,17 @@ Libraries are organized by ownership, not by type:
 
 ```
 bin/lib/
-  shared/     — libraries used by multiple binaries (nav-engine, net, spinner, z-wrapper, gh-install)
+  shared/     — libraries used by multiple binaries (nav-engine, net, ssh-conn, spinner, z-wrapper, gh-install)
   reload/     — shell reload machinery (reload.sh, symlink-farm.sh, ensure-dirs.sh, sync-mime-defaults.sh, downloads-rotation.sh)
   vibecheck/  — helpers owned exclusively by vibecheck
   sat/        — helpers owned exclusively by sat
   serve/      — assets owned exclusively by serve (share.html)
   pmo/        — helpers owned exclusively by pmo
+  yeetyoink/  — helpers owned jointly by the yeet/yoink twins
   input/      — UI assets for input prompts (rofi .rasi + .sh)
 ```
 
-**Rule**: if a file is used by more than one binary → `shared/`. If it belongs to exactly one → its own subdir.
+**Rule**: if a file is used by more than one binary → `shared/`. If it belongs to exactly one → its own subdir. Exception: twin binaries that are two directions of one operation (`yeet`/`yoink`) share a single named subdir rather than leaking their internals into `shared/`.
 
 ### Self-Healing Symlink System
 
@@ -236,6 +237,9 @@ $LIBDIR/reload/reload.sh
 | `modules/universal/paths.sh` | Everything | Defines all env vars incl. `$LIBDIR` |
 | `bin/lib/shared/nav-engine.sh` | tx, pw, yoink, yeet, z, peek, edit, scav, wormhole | Path resolution engine |
 | `bin/lib/shared/net.sh` | dock, yoink, yeet, evres, lsh, scav | LAN IP detection + `.N` shorthand |
+| `bin/lib/shared/ssh-conn.sh` | yoink, yeet, dock | `parse_conn` → `CONN_*`, plus `conn_ssh`/`conn_ssh_pipe`/`conn_rsync` |
+| `bin/lib/yeetyoink/remote.sh` | yoink, yeet | Remote path resolution + existence/tool probes |
+| `bin/lib/yeetyoink/prompt.sh` | yoink, yeet | `confirm_block` transfer confirmation UI |
 | `bin/lib/shared/spinner.sh` | dock, yoink | Terminal progress indicator |
 | `bin/lib/shared/z-wrapper.sh` | `source.sh` (z function) | Enhanced zoxide wrapper |
 | `bin/lib/shared/gh-install.sh` | tcpeek, netboop, dredge, dots | Lazy GitHub binary installer |

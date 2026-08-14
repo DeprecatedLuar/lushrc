@@ -72,10 +72,11 @@ cronotrigger_load_job() {
         fi
 
         key="$(cronotrigger_trim "${line%%=*}")"
-        value="$(cronotrigger_trim "${line#*=}")"
+        value="${line#*=}"
 
         case "$key" in
             name)
+                value="$(cronotrigger_trim "$value")"
                 if [[ "$allow_name" != true ]]; then
                     echo "cronotrigger: $display:$line_number: name is only valid in a new-job draft" >&2
                     return 1
@@ -85,16 +86,19 @@ cronotrigger_load_job() {
                 seen_name=true
                 ;;
             every)
+                value="$(cronotrigger_trim "$value")"
                 $seen_every && { echo "cronotrigger: $display:$line_number: duplicate key 'every'" >&2; return 1; }
                 JOB_EVERY="$value"
                 seen_every=true
                 ;;
             time)
+                value="$(cronotrigger_trim "$value")"
                 $seen_time && { echo "cronotrigger: $display:$line_number: duplicate key 'time'" >&2; return 1; }
                 JOB_TIME="$value"
                 seen_time=true
                 ;;
             anchor)
+                value="$(cronotrigger_trim "$value")"
                 $seen_anchor && { echo "cronotrigger: $display:$line_number: duplicate key 'anchor'" >&2; return 1; }
                 JOB_ANCHOR="$value"
                 seen_anchor=true
