@@ -32,12 +32,13 @@ modules/universal/source.sh
   ├→ defaults/defaults.sh (EDITOR, BROWSER, TERMINAL selections)
   ├→ aliases.sh (shell shortcuts)
   ├→ local.sh (user-specific, git-ignored)
-  └→ zoxide init + z() override via bin/lib/shared/z-wrapper.sh
+  └→ zoxide init + z() override via system/shared/z-wrapper.sh
 ```
 
 **Key Environment Variables**:
 - `BASHRC=$HOME/.config/lushrc` - Root of all configs (single source of truth)
-- `LIBDIR=$BASHRC/bin/lib` - Shell script libraries
+- `SYSDIR=$BASHRC/system` - Always-shipped shell-init dependencies (`shared/`, `reload/`)
+- `LIBDIR=$BASHRC/bin/lib` - Lazily-installed tool implementations
 - `WORKSPACE=$HOME/Workspace` - Root workspace directory
 - `TOOLS=$WORKSPACE/tools` - Cloned repos and external tools
 - `PROJECTS=$WORKSPACE/dev` - Your active development projects
@@ -45,45 +46,89 @@ modules/universal/source.sh
 - `MEDIA_GALLERY=$MEDIA/gallery` - Auto-populated symlink gallery (`pictures/`, `videos/`, `audio/`)
 - XDG dirs (`XDG_PICTURES_DIR`, `XDG_VIDEOS_DIR`, `XDG_MUSIC_DIR`) all resolve to `$MEDIA`
 
-### bin/lib/ Structure
+### system/ vs bin/lib/ — eager vs lazy
 
-Libraries are organized by ownership, not by type:
+`system/` and `bin/lib/` look similar but mean opposite lifecycles:
 
 ```
-bin/lib/
-  shared/     — libraries used by multiple binaries (nav-engine, net, ssh-conn, spinner, z-wrapper, gh-install)
-  reload/     — shell reload machinery (reload.sh, symlink-farm.sh, ensure-dirs.sh, sync-mime-defaults.sh, downloads-rotation.sh)
-  vibecheck/  — helpers owned exclusively by vibecheck
-  sat/        — helpers owned exclusively by sat
-  serve/      — assets owned exclusively by serve (share.html)
-  pmo/        — helpers owned exclusively by pmo
-  yeetyoink/  — helpers owned jointly by the yeet/yoink twins
-  input/      — UI assets for input prompts (rofi .rasi + .sh)
+system/           always ships — hard dependency of shell init
+  shared/         nav-engine, net, ssh-conn, spinner, z-wrapper, gh-install
+  reload/         reload.sh, symlink-farm.sh, ensure-dirs.sh, sync-mime-defaults.sh, downloads-rotation.sh
+
+bin/<name>              pointer, zero logic — a generated stub or a gh_install shadow
+bin/lib/<name>/main.sh  mandatory entrypoint — makes <name> a tool, gets a stub
+bin/lib/<name>/         no main.sh — a library, never gets a stub
 ```
 
-**Rule**: if a file is used by more than one binary → `shared/`. If it belongs to exactly one → its own subdir. Exception: twin binaries that are two directions of one operation (`yeet`/`yoink`) share a single named subdir rather than leaking their internals into `shared/`.
+lushrc's long-term direction is to ship only stubs, with tool implementations installed on
+demand (`lush install`); each tool eventually becomes its own repo, at which point `bin/<name>`
+stops changing at all — only what's behind it moves. `system/` never participates in that: it's
+what shell init and `reload` themselves depend on, so it can't be lazy.
+
+**The `main.sh` rule is the only discriminator.** A directory under `bin/lib/` with `main.sh` is
+a tool and gets an auto-generated `bin/<name>` stub. Without it, the directory is a library
+(`shared/`-style, but tool-scoped) and is never scanned or exposed on `PATH`. This is deliberately
+not inferred from filenames or exec bits — e.g. `bin/lib/lsh/` holds extensionless files
+(`mosh-client`, `ssh-askpass`, `latency`) that impersonate external binaries on purpose; they stay
+inert internal helpers precisely because only `main.sh` is ever promoted.
+
+**Single-file tools stay flat in `bin/`** until they earn a split — real internal seams, the way
+`cronotrigger`, `yeet`/`yoink`, and `lsh` earned theirs. A tool that's still one file has nothing
+to gain from `bin/lib/<name>/main.sh` alone.
+
+**Twin binaries** that are two directions of one operation (`yeet`/`yoink`) get two tool dirs
+(`bin/lib/yeet/main.sh`, `bin/lib/yoink/main.sh`) sharing one library dir (`bin/lib/yeetyoink/`,
+no `main.sh`) — never a single dir with either symlink tricks or `$0`-branching, both of which
+would violate the one-file-one-role rule.
+
+**Cross-boundary dependencies are declared, not left implicit** — a header comment naming what a
+`main.sh` reaches outside its own directory:
+```bash
+# shared: net.sh ssh-conn.sh      # this tool's dependency on system/shared/
+# needs: yeetyoink                # this tool's dependency on a sibling library dir
+```
+`grep -rn '^# shared:\|^# needs:' bin/lib/` gives the full cross-tool dependency graph in one
+command — the blast radius for any future extraction to a standalone repo.
 
 ### Self-Healing Symlink System
 
 On every `reload`:
-1. `bin/lib/reload/symlink-farm.sh` removes broken symlinks from `~/bin`, `~/.local/bin`, etc.
-2. Recreates symlinks: `$BASHRC/bin/*` → `~/bin/`, `$TOOLS/bin/*` → `~/bin/`
-3. `$BASHRC/bin` is on `$PATH` directly — no symlinks needed for bin/ scripts themselves
-4. Syncs UV tools, systemd configs, fonts, applications, media gallery
+1. `system/reload/symlink-farm.sh` removes broken symlinks from `~/bin`, `~/.local/bin`, etc.
+2. `sync_tool_stubs()` scans `bin/lib/*/main.sh` and generates a `bin/<name>` stub for any tool
+   that doesn't have one yet. Create-only — it never deletes a stub, since an absent
+   `bin/lib/<tool>/` is the normal state for an as-yet-uninstalled lazy tool.
+3. Recreates symlinks: `$BASHRC/bin/*` → `~/bin/`, `$TOOLS/bin/*` → `~/bin/`
+4. `$BASHRC/bin` is on `$PATH` directly — no symlinks needed for bin/ scripts themselves
+5. Syncs UV tools, systemd configs, fonts, applications, media gallery
 
 **Idempotent**: safe to run multiple times.
 
+### Tool Lifecycle (lush install / rm / list)
+
+```bash
+lush list              # every tool tracked under bin/lib/*/main.sh: installed or available
+lush install <tool>    # restore bin/lib/<tool>/ from the git tree (errors on unknown tool)
+lush install -A        # install every available tool
+lush rm <tool>         # delete bin/lib/<tool>/ — refuses if it has uncommitted changes
+lush rm <tool> --force # override the dirty-tree refusal
+```
+
+A generated stub also lazy-installs on first run if its `bin/lib/<tool>/main.sh` is missing —
+`lush install` is both what a stub calls automatically and what you run by hand to prep a machine
+or go offline deliberately.
+
 ### Navigation Engine
 
-`bin/lib/shared/nav-engine.sh` — universal path resolver powering `tx`, `pw`, `yoink`, `yeet`, `wormhole`, `z`, `peek`, `edit`, `scav`.
+`system/shared/nav-engine.sh` — universal path resolver powering `tx`, `pw`, `yoink`, `yeet`, `wormhole`, `z`, `peek`, `edit`, `scav`.
 
 **Flags**: `-f`/`--file` enables file resolution (default is directory-only), `--log` enables debug output.
 
 **Nav Index Shorthand**:
 ```
 w/  → $WORKSPACE/    t/  → $TOOLS/       c/  → $HOME/.config/
-b/  → $HOME/bin/     d/  → $HOME/Downloads/   l/ → $HOME/.local/
+b/|bin/ → $HOME/bin/     d/  → $HOME/Downloads/   l/ → $HOME/.local/
 sb/ → /usr/local/bin/   doc/ → $DOCUMENTS/    etc/ → /etc/
+s/|serv/|ser/ → $SERVICES_DIR/
 med/|pic/|vid/ → $MEDIA/
 ```
 
@@ -91,9 +136,9 @@ med/|pic/|vid/ → $MEDIA/
 
 **Using nav-engine in scripts**:
 ```bash
-dest=$("$LIBDIR/shared/nav-engine.sh" "$1")          # directory resolution
-dest=$("$LIBDIR/shared/nav-engine.sh" -f "$1")       # file-aware resolution
-dest=$("$LIBDIR/shared/nav-engine.sh" --log "$1")    # with debug output
+dest=$("$SYSDIR/shared/nav-engine.sh" "$1")          # directory resolution
+dest=$("$SYSDIR/shared/nav-engine.sh" -f "$1")       # file-aware resolution
+dest=$("$SYSDIR/shared/nav-engine.sh" --log "$1")    # with debug output
 ```
 
 Remote bootstrapping: `yoink`/`yeet` pipe `nav-engine.sh` via stdin to SSH for remote path resolution.
@@ -128,7 +173,7 @@ HTML template: `bin/lib/serve/share.html`.
 
 Unified connection format: `[-p PORT] [-l USER] [user@]host[:port]`
 
-`.N` subnet shorthand via `bin/lib/shared/net.sh` works across all SSH tools:
+`.N` subnet shorthand via `system/shared/net.sh` works across all SSH tools:
 ```bash
 yoink .17 w/project .      # pull from LAN host using nav-engine path
 yeet --rm data.sql .17     # push and delete local source
@@ -161,8 +206,8 @@ Whisper config (model, device, compute type) hardcoded at top of script.
 - **pack/unpack**: Universal archive handling
 - **vibecheck**: Port scanning, process finding, hardware info, system metrics
 - **conf**: Quick access to config files
-- **lush**: Self-management (`update`, `status`, `version`, `root`)
-- **gh-install** (`bin/lib/shared/gh-install.sh`): `gh_install <binary> <user/repo>` — lazy-installs GitHub-hosted binaries via the-satellite. Used by `tcpeek`, `netboop`, `dredge`, `dots`.
+- **lush**: Self-management (`update`, `status`, `version`, `root`, `install`, `rm`, `list`)
+- **gh-install** (`system/shared/gh-install.sh`): `gh_install <binary> <user/repo>` — lazy-installs GitHub-hosted binaries via the-satellite. Used by `tcpeek`, `netboop`, `dredge`, `dots`.
 
 ## Development Patterns
 
@@ -171,13 +216,16 @@ Whisper config (model, device, compute type) hardcoded at top of script.
 1. Create `bin/newcmd` with `#!/usr/bin/env bash`, make executable
 2. `reload` — symlink appears in `~/bin/` automatically
 3. For system-wide (sudo) access: `lush root newcmd`
+4. If it grows real internal seams, split it: move it to `bin/lib/newcmd/main.sh`, `reload` to
+   auto-generate the `bin/newcmd` stub (see system/ vs bin/lib/ above)
 
 ### Adding a Library
 
-- **Shared** (multiple commands use it): `bin/lib/shared/newlib.sh`, source via `source "$LIBDIR/shared/newlib.sh"`
-- **Command-specific**: `bin/lib/cmdname/helper.sh`
+- **System-wide** (shell-init dependency, used by multiple binaries): `system/shared/newlib.sh`, source via `source "$SYSDIR/shared/newlib.sh"`
+- **Tool-specific, shared by that tool's own entrypoints**: `bin/lib/toolname/helper.sh` (no `main.sh` in that dir — it's a library, not a tool)
+- **Command-specific, single tool**: same, under that tool's own `bin/lib/cmdname/`
 
-Key shared libs:
+Key system libs:
 - `shared/net.sh` — `local_ip()`, `expand_local_ip()` (`.N` → full IP)
 - `shared/spinner.sh` — `spin "Label" $PID` — blocks until PID exits
 - `shared/nav-engine.sh` — path resolution (see above)
@@ -216,11 +264,12 @@ reload command
   ↓
 source ~/.bashrc
   ↓
-$LIBDIR/reload/reload.sh
+$SYSDIR/reload/reload.sh
   ├─ ensure-dirs.sh       (mkdir -p all workspace dirs)
-  ├─ chmod +x             (bin/, TOOLS/bin/)
+  ├─ chmod +x             (bin/, TOOLS/bin/, bin/lib/*/main.sh, system/*/*)
   ├─ symlink-farm.sh
   │   ├─ cleanup broken symlinks
+  │   ├─ sync_tool_stubs → generate bin/<name> for any new bin/lib/<name>/main.sh
   │   ├─ link $TOOLS/bin/* → ~/bin/
   │   ├─ sync UV tools, fonts, Nix apps, systemd
   │   ├─ sync_media_gallery → $MEDIA_GALLERY/{pictures,videos,audio,wallpapers}
@@ -234,15 +283,18 @@ $LIBDIR/reload/reload.sh
 | File | Used By | Purpose |
 |------|---------|---------|
 | `bashrc` | Shell init | Entry point, sets `$BASHRC`, sources modules |
-| `modules/universal/paths.sh` | Everything | Defines all env vars incl. `$LIBDIR` |
-| `bin/lib/shared/nav-engine.sh` | tx, pw, yoink, yeet, z, peek, edit, scav, wormhole | Path resolution engine |
-| `bin/lib/shared/net.sh` | dock, yoink, yeet, evres, lsh, scav | LAN IP detection + `.N` shorthand |
-| `bin/lib/shared/ssh-conn.sh` | yoink, yeet, dock | `parse_conn` → `CONN_*`, plus `conn_ssh`/`conn_ssh_pipe`/`conn_rsync` |
+| `modules/universal/paths.sh` | Everything | Defines all env vars incl. `$SYSDIR`, `$LIBDIR` |
+| `system/shared/nav-engine.sh` | tx, pw, yoink, yeet, z, peek, edit, scav, wormhole | Path resolution engine |
+| `system/shared/net.sh` | dock, yoink, yeet, evres, lsh, scav | LAN IP detection + `.N` shorthand |
+| `system/shared/ssh-conn.sh` | yoink, yeet, dock | `parse_conn` → `CONN_*`, plus `conn_ssh`/`conn_ssh_pipe`/`conn_rsync` |
 | `bin/lib/yeetyoink/remote.sh` | yoink, yeet | Remote path resolution + existence/tool probes |
 | `bin/lib/yeetyoink/prompt.sh` | yoink, yeet | `confirm_block` transfer confirmation UI |
-| `bin/lib/shared/spinner.sh` | dock, yoink | Terminal progress indicator |
-| `bin/lib/shared/z-wrapper.sh` | `source.sh` (z function) | Enhanced zoxide wrapper |
-| `bin/lib/shared/gh-install.sh` | tcpeek, netboop, dredge, dots | Lazy GitHub binary installer |
-| `bin/lib/reload/reload.sh` | `reload` alias, `lush` | Orchestrates config refresh |
-| `bin/lib/reload/symlink-farm.sh` | `reload.sh` | Symlink maintenance |
+| `system/shared/spinner.sh` | dock, yoink | Terminal progress indicator |
+| `system/shared/z-wrapper.sh` | `source.sh` (z function) | Enhanced zoxide wrapper |
+| `system/shared/gh-install.sh` | tcpeek, netboop, dredge, dots | Lazy GitHub binary installer |
+| `system/reload/reload.sh` | `reload` alias, `lush` | Orchestrates config refresh |
+| `system/reload/symlink-farm.sh` | `reload.sh` | Symlink maintenance + tool stub generation |
+| `bin/lib/cronotrigger/main.sh` | `bin/cronotrigger` stub | Split-tool entrypoint (6 sourced modules) |
+| `bin/lib/yeet/main.sh`, `bin/lib/yoink/main.sh` | their stubs | Twin binaries sharing `bin/lib/yeetyoink/` |
+| `bin/lib/lsh/main.sh` | `bin/lsh`, `bin/ssh` stub/alias | Split-tool entrypoint; owns extensionless helpers (`mosh-client`, `ssh-askpass`, `latency`) |
 | `bin/hotline` | tmux | Async command launcher |
