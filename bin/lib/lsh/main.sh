@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# ssh shadow - transparent wrapper adding:
+#   --password flag   (sshpass integration)
+#   .N host shorthand (LAN subnet expansion via net.sh)
+#   kitten ssh        (better terminal integration when inside Kitty)
+# shared: net.sh
+
+LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+SYSDIR="${SYSDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../system" && pwd)}"
+source "$SYSDIR/shared/net.sh"
+source "$LIBDIR/lsh/unlock.sh"
+source "$LIBDIR/lsh/list.sh"
+source "$LIBDIR/lsh/add.sh"
+source "$LIBDIR/lsh/edit.sh"
+source "$LIBDIR/lsh/remove.sh"
+source "$LIBDIR/lsh/keys.sh"
+source "$LIBDIR/lsh/tunnel.sh"
+source "$LIBDIR/lsh/connect.sh"
+
+LSH_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+
+# Find the real ssh binary (skip ourselves). _SELF_DIR is lushrc's bin/ — where
+# the lsh/ssh stub and alias symlinks actually live — not this script's own
+# bin/lib/lsh, so a stub-through-main.sh invocation still excludes itself.
+_SELF_DIR="$(dirname "$LIBDIR")"
+_RAW_SSH=$(type -a ssh 2>/dev/null | awk '{print $NF}' | grep -vF "$_SELF_DIR/" | head -1)
+[[ -z "$_RAW_SSH" ]] && { echo "lsh: could not find system ssh" >&2; exit 1; }
+
+# A staged child must use the same resolved adapter selected by its parent.
+[[ -n ${LSH_RAW_SSH:-} ]] && _RAW_SSH=$LSH_RAW_SSH
+REAL_SSH=("$_RAW_SSH")
+
+case "$1" in
+    unlock)
+        shift
+        lsh_unlock "$@"
+        exit $?
+        ;;
+    ls|list)
+        shift
+        lsh_list "$@"
+        exit $?
+        ;;
+    status)
+        shift
+        lsh_list --status "$@"
+        exit $?
+        ;;
+    key|keys)
+        shift
+        lsh_keys "$@"
+        exit $?
+        ;;
+    add|a)
+        shift
+        lsh_add "$@"
+        exit $?
+        ;;
+    edit|e)
+        shift
+        lsh_edit "$@"
+        exit $?
+        ;;
+    remove|rm)
+        shift
+        lsh_remove "$@"
+        exit $?
+        ;;
+    tunnel|t)
+        shift
+        lsh_tunnel "$@"
+        exit $?
+        ;;
+esac
+
+# Use kitten ssh only when running inside Kitty terminal
+# Disabled: kitten ssh hangs the terminal
+# if [[ -n "$KITTY_WINDOW_ID" ]] && command -v kitten &>/dev/null; then
+#     REAL_SSH=(kitten ssh)
+# fi
+
+# Parse --password flag (can appear anywhere in args)
+PASSWORD=""
+ARGS=()
+SKIP_NEXT=false
+RAW_MODE=false
+NO_TMUX=false
+NO_MOSH=false
+
+for arg in "$@"; do
+    if $SKIP_NEXT; then
+        PASSWORD="$arg"
+        SKIP_NEXT=false
+        continue
+    fi
+    case "$arg" in
+        -P|--password) SKIP_NEXT=true ;;
+        --password=*) PASSWORD="${arg#--password=}" ;;
+        --no-tmux) NO_TMUX=true ;;
+        --no-mosh) NO_MOSH=true ;;
+        --raw|--escape-hatch) RAW_MODE=true ;;
+        --help|-h)
+            cat <<'EOF'
+lsh — lushrc ssh wrapper
+
+Commands:
+  lsh unlock <user@host[:port]> [keyfile] [--all]
+                          Send SSH keys for password-free access
+                          keyfile looked up in ~/.ssh/public/<keyfile>.pub
+                          Auto-detects the only key in ~/.ssh/public if none given
+
+  lsh add|a <name> <user@host[:port]> [-p port]
+                          Save SSH config entry to ~/.ssh/config.d/lsh
+
+  lsh edit|e <name>       Edit an existing entry in $EDITOR (key=value scratch file)
+  lsh edit|e <name> <user@host[:port]> [-p port]
+                          Edit an existing entry inline (same syntax as add)
+
+  lsh remove|rm <name>    Delete an entry from ~/.ssh/config.d/lsh
+
+  lsh ls | lsh list       List connections, then dim unreachable ones interactively
+  lsh list --status       Explicit status-check spelling
+  lsh status              Alias for lsh list --status
+  lsh key|keys [pub|priv] List SSH keypairs in ~/.ssh (name, type, priv?, fingerprint)
+
+  lsh tunnel|t [-d] <host> <port>[,<port>|<local>:<remote>...]
+                          Local port forward(s) to <host>, no remote shell
+                          Blocks the terminal until Ctrl-C (like a daemon)
+                          Bare port forwards the same port both sides
+                          local:remote overrides the local-side port
+                          Comma-separate multiple: 1111,2222,1112:1111
+                          -d backgrounds the tunnel instead (-fN)
+
+Extras:
+  --password, -P <pass>   Connect using sshpass (requires sshpass)
+  --no-tmux               Skip local tmux staging; still prefer Mosh
+  --no-mosh               Force SSH; keep local tmux staging
+  --raw, --escape-hatch   Bypass lsh, exec system ssh directly
+  ssh <host>              Plain interactive connections use local tmux and
+                          prefer Mosh, falling back to SSH before attachment;
+                          after ten seconds, ping decides whether to keep waiting
+  .N                      LAN subnet shorthand (e.g. .17 → 192.168.1.17)
+  user@.N[:port]          user + subnet + optional port
+
+EOF
+            # Also show real ssh's own usage; its exit status is irrelevant here
+            "$_RAW_SSH" 2>&1 || true
+            exit 0
+            ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+
+$RAW_MODE && exec "$_RAW_SSH" "${ARGS[@]}"
+
+# Smart routing is deliberately narrow: only a plain interactive host is
+# eligible. Remote commands, pipes, passwords, and SSH options keep the exact
+# SSH behavior callers already rely on.
+SMART_CONNECTION=false
+if [[ ${LSH_INTERACTIVE_SHELL:-} == 1 && -z $PASSWORD && -t 0 && -t 1 ]] \
+    && lsh_is_plain_connection "${ARGS[@]}"; then
+    SMART_CONNECTION=true
+fi
+
+# Expand .N subnet shorthand in host argument (handles user@.N and bare .N)
+for i in "${!ARGS[@]}"; do
+    arg="${ARGS[$i]}"
+    # Only touch non-flag args that contain .N pattern
+    [[ "$arg" == -* ]] && continue
+    if [[ "$arg" =~ ^([^@]+@)?(\.[0-9]+)(:[0-9]+)?$ ]]; then
+        prefix="${BASH_REMATCH[1]}"
+        host="${BASH_REMATCH[2]}"
+        port="${BASH_REMATCH[3]#:}"  # strip leading colon
+        expanded=$(expand_local_ip "$host") || exit 1
+        ARGS[$i]="${prefix}${expanded}"
+        [[ -n "$port" ]] && ARGS=("-p" "$port" "${ARGS[@]}")
+        break  # host is always the first non-flag positional
+    fi
+done
+
+if [[ -n ${LSH_STAGE_CHILD:-} ]]; then
+    lsh_run_staged_transport "$_RAW_SSH" "${LSH_STAGE_MOSH:-1}" "${ARGS[@]}"
+    exit $?
+fi
+
+if $SMART_CONNECTION; then
+    TARGET=${ARGS[${#ARGS[@]}-1]}
+    if ! lsh_target_is_valid "$_RAW_SSH" "$TARGET"; then
+        printf "lsh: '%s' is neither a command nor a resolvable SSH host\n" "$TARGET" >&2
+        exit 2
+    fi
+
+    ALLOW_MOSH=1
+    $NO_MOSH && ALLOW_MOSH=0
+
+    if $NO_TMUX || [[ -n ${TMUX:-} ]]; then
+        lsh_run_direct_smart_connection "$_RAW_SSH" "$ALLOW_MOSH" "${ARGS[@]}"
+        exit $?
+    fi
+
+    if command -v tmux >/dev/null 2>&1; then
+        lsh_stage_connection "$LSH_SELF" "$_RAW_SSH" "$ALLOW_MOSH" "${ARGS[@]}"
+        exit $?
+    fi
+fi
+
+if [[ -n "$PASSWORD" ]]; then
+    if ! command -v sshpass &>/dev/null; then
+        echo "ssh: --password requires sshpass (apt install sshpass)" >&2
+        exit 1
+    fi
+    exec sshpass -p "$PASSWORD" "${REAL_SSH[@]}" "${ARGS[@]}"
+fi
+
+# Set up askpass only for non-interactive shells (where SSH can't prompt directly)
+if [[ ! -t 0 ]]; then
+    export SSH_ASKPASS="${LIBDIR}/lsh/ssh-askpass"
+    export SSH_ASKPASS_REQUIRE=prefer
+fi
+
+# Client-side TERM compatibility: send a universal TERM to servers that may
+# not have definitions for modern local terminals.
+lsh_exec_ssh "${REAL_SSH[0]}" "${ARGS[@]}"
