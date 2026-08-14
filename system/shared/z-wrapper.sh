@@ -34,7 +34,7 @@ if [[ "$1" == "-" ]]; then
 fi
 
 # Resolve path using nav-engine (suppress its error output)
-target="$($LIBDIR/shared/nav-engine.sh "${flags[@]}" "$1" 2>/dev/null)"
+target="$("$(dirname "${BASH_SOURCE[0]}")/nav-engine.sh" "${flags[@]}" "$1" 2>/dev/null)"
 
 # Check if nav-engine succeeded
 if [[ $? -eq 0 ]]; then

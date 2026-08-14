@@ -4,6 +4,7 @@
 set -euo pipefail
 
 BASHRC="${BASHRC:-$HOME/.config/lushrc}"
+SYSDIR="${SYSDIR:-$BASHRC/system}"
 SYS_BIN="$HOME/bin/sys"
 
 case "${1:-help}" in
@@ -20,7 +21,7 @@ case "${1:-help}" in
             ln -sf "$bin" "$SYS_BIN/$prog"
             echo "$prog -> $SYS_BIN/"
         done
-        "$LIBDIR/reload/reload.sh" -s
+        "$SYSDIR/reload/reload.sh" -s
         ;;
 
     update)
@@ -37,7 +38,7 @@ case "${1:-help}" in
         fi
 
         git pull
-        "$LIBDIR/reload/reload.sh"
+        "$SYSDIR/reload/reload.sh"
         ;;
 
     status)

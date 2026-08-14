@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-LIBDIR="${LIBDIR:-$(dirname "$(realpath "${BASH_SOURCE[0]}")")/lib}"
-source "$LIBDIR/shared/gh-install.sh"
+SYSDIR="${SYSDIR:-$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/system}"
+source "$SYSDIR/shared/gh-install.sh"
 gh_install "tcpeek" "DeprecatedLuar/tcpeek" "$@"

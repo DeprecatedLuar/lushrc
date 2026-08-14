@@ -3,7 +3,7 @@
 
 reload() {
     source ~/.bashrc
-    $LIBDIR/reload/reload.sh "$@"
+    $SYSDIR/reload/reload.sh "$@"
 }
 
 logout() {

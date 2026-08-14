@@ -8,9 +8,9 @@
 # Path resolution ships nav-engine.sh over stdin, so the remote host needs
 # nothing installed beyond bash.
 #
-# Requires: shared/ssh-conn.sh (conn_ssh), $LIBDIR
+# Requires: shared/ssh-conn.sh (conn_ssh), $SYSDIR
 
-NAV_ENGINE="$LIBDIR/shared/nav-engine.sh"
+NAV_ENGINE="$SYSDIR/shared/nav-engine.sh"
 
 remote_resolve_path() {
     local query="$1" nav_flags="${2:-}"

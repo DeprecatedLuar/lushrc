@@ -4,8 +4,9 @@
 set -euo pipefail
 
 LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
-source "$LIBDIR/shared/net.sh"
-source "$LIBDIR/shared/ssh-conn.sh"
+SYSDIR="${SYSDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../system" && pwd)}"
+source "$SYSDIR/shared/net.sh"
+source "$SYSDIR/shared/ssh-conn.sh"
 source "$LIBDIR/yeetyoink/remote.sh"
 source "$LIBDIR/yeetyoink/prompt.sh"
 

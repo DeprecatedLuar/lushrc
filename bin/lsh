@@ -5,7 +5,8 @@
 #   kitten ssh        (better terminal integration when inside Kitty)
 
 LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)}"
-source "$LIBDIR/shared/net.sh"
+SYSDIR="${SYSDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../system" && pwd)}"
+source "$SYSDIR/shared/net.sh"
 source "$LIBDIR/lsh/unlock.sh"
 source "$LIBDIR/lsh/list.sh"
 source "$LIBDIR/lsh/add.sh"

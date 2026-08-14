@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 DOCK_DIR="${TMPDIR:-/tmp}/dock"
-LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
-source "$LIBDIR/shared/net.sh"
-source "$LIBDIR/shared/ssh-conn.sh"
-source "$LIBDIR/shared/spinner.sh"
+SYSDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../system" && pwd)"
+source "$SYSDIR/shared/net.sh"
+source "$SYSDIR/shared/ssh-conn.sh"
+source "$SYSDIR/shared/spinner.sh"
 
 # --- Parse arguments ---
 # Accepts: [-p PORT] [-l USER] [user@]host[:port] [remote_path]

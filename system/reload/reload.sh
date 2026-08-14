@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
+RELOAD_DIR="$(dirname "${BASH_SOURCE[0]}")"
+
 #--[ENSURE DIRECTORY STRUCTURE]-----------------
 
-source "$LIBDIR/reload/ensure-dirs.sh"
+source "$RELOAD_DIR/ensure-dirs.sh"
 
 #--[MAKE SCRIPTS EXECUTABLE]-------------------
 
@@ -11,12 +13,14 @@ chmod +x $TOOLS/bin/* 2>/dev/null || true
 chmod +x $TOOLS/bin/lib/* 2>/dev/null || true
 chmod +x $BASHRC/bin/* 2>/dev/null || true
 chmod +x $LIBDIR/* 2>/dev/null || true
+chmod +x $LIBDIR/*/main.sh 2>/dev/null || true
+chmod +x $SYSDIR/*/* 2>/dev/null || true
 chmod +x $HOME/bin/* 2>/dev/null || true
 chmod +x $HOME/bin/sys/* 2>/dev/null || true
 
 #--[SYNC SYMLINKS]-----------------------------
 
-source "$LIBDIR/reload/symlink-farm.sh"
+source "$RELOAD_DIR/symlink-farm.sh"
 
 #--[SYNC SSH KEYS]-----------------------------
 
@@ -63,7 +67,7 @@ sync_ssh_private_keys
 
 #--[SYNC MIME DEFAULTS]------------------------
 
-source "$LIBDIR/reload/sync-mime-defaults.sh"
+source "$RELOAD_DIR/sync-mime-defaults.sh"
 ln -sf "$BASHRC/modules/defaults/mimeapps.list" "$HOME/.config/mimeapps.list"
 
 #--[SYSTEM-LEVEL SYNC]-------------------------

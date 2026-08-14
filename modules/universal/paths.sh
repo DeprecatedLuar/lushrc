@@ -49,8 +49,11 @@ export SATELLITE="$PROJECTS/cli/the-satellite"
 # Tools subdirectories
 export SERVICES_DIR="$WORKSPACE/services"
 
-# Script library directory
+# Script library directory (lazily-installed tool implementations)
 export LIBDIR="$BASHRC/bin/lib"
+
+# System directory (always-shipped shell-init dependencies: shared/, reload/)
+export SYSDIR="$BASHRC/system"
 
 #------------------------ EXTRAS ---------------------------
 

@@ -178,7 +178,7 @@ if [[ $- == *i* ]]; then
         command -v wormhole &>/dev/null && wormhole kill 2>/dev/null
         echo "wormhole" >> "$FLAG"
     fi
-    "$BASHRC/bin/lib/reload/downloads-rotation.sh" 2>/dev/null || true
+    "$BASHRC/system/reload/downloads-rotation.sh" 2>/dev/null || true
 
     # Logout functionality - clear console on exit for privacy (login shells)
     if [[ $SHLVL -eq 1 ]]; then
