@@ -24,8 +24,8 @@ resolve_docker_name() {
 lsof -i -P -n | awk 'NR>1 && /LISTEN/ {
     split($9, a, ":")
     port = a[length(a)]
-    if (!seen[port,$2]) {
-        seen[port,$2] = 1
+    if (!seen[port,$1]) {
+        seen[port,$1] = 1
         print port " " $1
     }
 }' | sort -n | while read -r port proc; do
