@@ -7,6 +7,53 @@ BASHRC="${BASHRC:-$HOME/.config/lushrc}"
 SYSDIR="${SYSDIR:-$BASHRC/system}"
 SYS_BIN="$HOME/bin/sys"
 
+# --- Tool lifecycle helpers (bin/lib/<tool>/main.sh) ---
+
+lush_available_tools() {
+    git -C "$BASHRC" ls-tree -r --name-only HEAD -- bin/lib 2>/dev/null \
+        | grep '/main\.sh$' \
+        | while IFS= read -r path; do
+              rel="${path#bin/lib/}"
+              echo "${rel%%/*}"
+          done | sort -u
+}
+
+lush_install_one() {
+    local tool="$1"
+
+    if [[ -f "$BASHRC/bin/lib/$tool/main.sh" ]]; then
+        echo "$tool: already installed"
+        return 0
+    fi
+
+    if ! git -C "$BASHRC" ls-tree -r --name-only HEAD -- "bin/lib/$tool/main.sh" | grep -q .; then
+        echo "$tool: unknown tool" >&2
+        return 1
+    fi
+
+    git -C "$BASHRC" checkout HEAD -- "bin/lib/$tool" || { echo "$tool: install failed" >&2; return 1; }
+    echo "$tool: installed"
+}
+
+lush_rm_one() {
+    local tool="$1" force="$2"
+    local dir="$BASHRC/bin/lib/$tool"
+
+    [[ -d "$dir" ]] || { echo "$tool: not installed"; return 0; }
+
+    if [[ "$force" != true ]]; then
+        local dirty
+        dirty="$(git -C "$BASHRC" status --porcelain -- "$dir" 2>/dev/null)"
+        if [[ -n "$dirty" ]]; then
+            echo "$tool: uncommitted changes in bin/lib/$tool — refusing (use --force)" >&2
+            return 1
+        fi
+    fi
+
+    rm -rf "$dir"
+    echo "$tool: removed"
+}
+
 case "${1:-help}" in
     root)
         [[ -z "$2" ]] && { echo "Usage: lush root <program> [program2...]"; exit 1; }
@@ -51,16 +98,66 @@ case "${1:-help}" in
         echo "lushrc @ $(git rev-parse --short HEAD) ($(git log -1 --format='%cr'))"
         ;;
 
+    install)
+        shift
+        [[ $# -eq 0 ]] && { echo "Usage: lush install <tool>|-A|--all"; exit 1; }
+
+        status=0
+        if [[ "$1" == "-A" || "$1" == "--all" ]]; then
+            while IFS= read -r tool; do
+                lush_install_one "$tool" || status=1
+            done < <(lush_available_tools)
+        else
+            for tool in "$@"; do
+                lush_install_one "$tool" || status=1
+            done
+        fi
+        exit "$status"
+        ;;
+
+    rm|remove|uninstall)
+        shift
+        force=false
+        tools=()
+        for arg in "$@"; do
+            case "$arg" in
+                --force) force=true ;;
+                *) tools+=("$arg") ;;
+            esac
+        done
+        [[ ${#tools[@]} -eq 0 ]] && { echo "Usage: lush rm <tool> [--force]"; exit 1; }
+
+        status=0
+        for tool in "${tools[@]}"; do
+            lush_rm_one "$tool" "$force" || status=1
+        done
+        exit "$status"
+        ;;
+
+    list)
+        printf "%-20s %s\n" "TOOL" "STATUS"
+        while IFS= read -r tool; do
+            if [[ -f "$BASHRC/bin/lib/$tool/main.sh" ]]; then
+                printf "%-20s %s\n" "$tool" "installed"
+            else
+                printf "%-20s %s\n" "$tool" "available"
+            fi
+        done < <(lush_available_tools)
+        ;;
+
     help|*)
         cat << 'EOF'
 lush - lushrc management
 
 Commands:
-  root <prog>  - Symlink to ~/bin/sys for sudo access
-  update       - Pull latest from remote
-  status       - Show local changes
-  version      - Show current version
-  help         - Show this message
+  root <prog>          - Symlink to ~/bin/sys for sudo access
+  update               - Pull latest from remote
+  status               - Show local changes
+  version              - Show current version
+  install <tool>|-A    - Install a lazily-shipped tool (-A/--all for every one)
+  rm <tool> [--force]  - Remove an installed tool's implementation
+  list                 - List available/installed tools
+  help                 - Show this message
 EOF
         ;;
 esac
