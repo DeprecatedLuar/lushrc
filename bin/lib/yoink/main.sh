@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# yoink - pull files from remote machines
+# shared: net.sh ssh-conn.sh
+# needs: yeetyoink
+
+set -euo pipefail
+
+LIBDIR="${LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+SYSDIR="${SYSDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../system" && pwd)}"
+source "$SYSDIR/shared/net.sh"
+source "$SYSDIR/shared/ssh-conn.sh"
+source "$LIBDIR/yeetyoink/remote.sh"
+source "$LIBDIR/yeetyoink/prompt.sh"
+
+DEFAULT_REMOTE_PATH="~"
+DEFAULT_LOCAL_DEST="."
+RSYNC_ARGS=(-az --info=progress2 --no-inc-recursive)
+
+die() { printf 'yoink: %s\n' "$1" >&2; exit 1; }
+
+show_help() {
+    echo "Usage: yoink [OPTIONS] [user@]host[:port] [remote_path] [local_dest]"
+    echo ""
+    echo "Pull files from remote machines using rsync over SSH."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help          Show this help message"
+    echo "  --rm                Remove source files after transfer"
+    echo "  -y, --yes           Skip confirmation prompt"
+    echo "  --debug             Enable debug output (path resolution)"
+    echo "  -p PORT             SSH port (can also use host:port syntax)"
+    echo "  -l USER             SSH user (can also use user@host syntax)"
+    echo ""
+    echo "Examples:"
+    echo "  yoink nuremberg                      # pull \$HOME"
+    echo "  yoink .17:8022 file.txt              # pull file from LAN host"
+    echo "  yoink vps d/backup.db ~/backups      # nav-engine path, local dest"
+    echo "  yoink --rm server w/data.sql .       # pull and delete remote source"
+    echo "  yoink --debug .17 ~/Documents/foo    # debug path resolution"
+    exit 0
+}
+
+# --- Parse arguments ---
+REMOVE_SOURCE=false
+SKIP_CONFIRM=false
+DEBUG=false
+FLAG_USER=""
+FLAG_PORT=""
+POSITIONALS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)      show_help ;;
+        --rm)           REMOVE_SOURCE=true; shift ;;
+        -y|--yes)       SKIP_CONFIRM=true; shift ;;
+        --debug)        DEBUG=true; shift ;;
+        -p)             FLAG_PORT="$2"; shift 2 ;;
+        -l)             FLAG_USER="$2"; shift 2 ;;
+        -*)             die "unknown option: $1" ;;
+        *)              POSITIONALS+=("$1"); shift ;;
+    esac
+done
+set -- "${POSITIONALS[@]+"${POSITIONALS[@]}"}"
+
+[[ $# -lt 1 ]] && show_help
+
+parse_conn "$1" "$FLAG_USER" "$FLAG_PORT" || exit 1
+
+# Local home references are rewritten to tilde so the remote resolves its own
+REMOTE_QUERY="${2:-$DEFAULT_REMOTE_PATH}"
+REMOTE_QUERY="${REMOTE_QUERY/#$HOME/\~}"
+LOCAL_DEST="${3:-$DEFAULT_LOCAL_DEST}"
+
+# --- Resolve remote source ---
+if [[ "$DEBUG" == true ]]; then
+    REMOTE_PATH=$(remote_resolve_path "$REMOTE_QUERY" "-f --debug") \
+        || die "failed to resolve '$REMOTE_QUERY' on $CONN_TARGET"
+else
+    REMOTE_PATH=$(remote_resolve_path "$REMOTE_QUERY" "-f" 2>/dev/null) \
+        || die "failed to resolve '$REMOTE_QUERY' on $CONN_TARGET"
+fi
+
+remote_has rsync || die "rsync not found on $CONN_TARGET"
+remote_exists "$REMOTE_PATH" || die "source not found on $CONN_TARGET:$REMOTE_PATH"
+
+if [[ "$SKIP_CONFIRM" == false ]]; then
+    confirm_block \
+        "Yoinking" "$C_PATH$REMOTE_PATH" \
+        "From"     "$C_HOST$CONN_TARGET" \
+        "To"       "$C_PATH$LOCAL_DEST" \
+        || { echo "Cancelled"; exit 0; }
+fi
+
+# --- Transfer ---
+if [[ "$REMOVE_SOURCE" == true ]]; then
+    RSYNC_ARGS+=(--remove-source-files)
+fi
+
+conn_rsync "${RSYNC_ARGS[@]}" "$CONN_TARGET:$REMOTE_PATH" "$LOCAL_DEST" \
+    || die "transfer failed"
+
+# --remove-source-files only unlinks files, leaving the directory skeleton
+if [[ "$REMOVE_SOURCE" == true ]]; then
+    conn_ssh "test -d '$REMOTE_PATH' && find '$REMOTE_PATH' -type d -empty -delete" || true
+fi
+
+printf "Yoinked %s%s%s\n" "$C_PATH" "$(basename "$REMOTE_PATH")" "$C_RESET"
+printf " %s← %s:%s%s\n" "$C_HOST" "$CONN_TARGET" "$REMOTE_PATH" "$C_RESET"
