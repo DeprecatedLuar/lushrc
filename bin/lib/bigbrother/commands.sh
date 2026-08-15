@@ -12,6 +12,19 @@ bigbrother_name_from_path() {
     basename "$1"
 }
 
+# Resolves an on-disk path to its absolute form and checks it's executable.
+# Echoes the absolute path; prints an error and returns 1 otherwise. Shared
+# by add/enable/run so they all agree on what counts as a runnable path.
+bigbrother_resolve_executable_path() {
+    local input="$1" abs
+    abs=$(bigbrother_resolve_abs "$input") || {
+        echo "bigbrother: no such path '$input'" >&2
+        return 1
+    }
+    [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
+    printf '%s\n' "$abs"
+}
+
 bigbrother_open_editor() {
     local path="$1" editor_value
     local -a editor_command=()
@@ -225,11 +238,7 @@ bigbrother_cmd_add() {
         body=$(bigbrother_render_unit "$suggested" "${exec_flag:-$exec_start}" "${workdir_flag:-$workdir}")
     elif [[ "$input" == */* ]] || [[ -f "$input" ]]; then
         local abs
-        abs=$(bigbrother_resolve_abs "$input") || {
-            echo "bigbrother: no such path '$input'" >&2
-            return 1
-        }
-        [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
+        abs=$(bigbrother_resolve_executable_path "$input") || return 1
         suggested=$(bigbrother_name_from_path "$abs")
         body=$(bigbrother_render_unit "$suggested" "${exec_flag:-$abs}" "${workdir_flag:-$(dirname "$abs")}")
     else
@@ -306,11 +315,7 @@ bigbrother_cmd_enable() {
         # to `run` instead of erroring as an unknown command.
         if [[ "$name" == */* ]] || [[ -f "$name" ]]; then
             local abs svc_name
-            abs=$(bigbrother_resolve_abs "$name") || {
-                echo "bigbrother: no such path '$name'" >&2
-                return 1
-            }
-            [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
+            abs=$(bigbrother_resolve_executable_path "$name") || return 1
             svc_name=$(bigbrother_name_from_path "$abs")
 
             if bigbrother_is_defined "$svc_name"; then
@@ -347,41 +352,43 @@ bigbrother_cmd_disable() {
 }
 
 bigbrother_cmd_run() {
-    local input="${1:-}"
-    [[ -z "$input" ]] && { echo "Usage: bigbrother run <path|name>" >&2; return 1; }
+    (($# > 0)) || { echo "Usage: bigbrother run <command|path|name> [args...]" >&2; return 1; }
+    local input="$1"
 
     bigbrother_ensure_linger
 
-    if [[ "$input" == */* ]] || [[ -f "$input" && -x "$input" ]]; then
-        local abs name
-        abs=$(bigbrother_resolve_abs "$input") || {
-            echo "bigbrother: no such path '$input'" >&2
-            return 1
-        }
-        [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
-        name=$(bigbrother_name_from_path "$abs")
-
-        if bigbrother_is_defined "$name"; then
-            echo "bigbrother: '$name' is already a defined service; use 'bigbrother run $name'" >&2
-            return 1
-        fi
-        if bigbrother_is_transient "$name" 2>/dev/null && bigbrother_is_running "$name"; then
-            echo "bigbrother: '$name' is already running" >&2
-            return 1
-        fi
-
-        bigbrother_run_transient "$name" "$(dirname "$abs")" "$abs"
-        echo "bigbrother: '$name' is running"
+    # Bare name, no extra args, already defined: just start it.
+    if (($# == 1)) && bigbrother_is_defined "$input"; then
+        bigbrother_start "$input"
+        echo "bigbrother: started '$input'"
         return
     fi
 
-    # bare name: must be a defined service
-    bigbrother_is_defined "$input" || {
-        echo "bigbrother: '$input' is not a defined service and not a path" >&2
+    local abs workdir
+    if [[ "$input" == */* ]] || [[ -f "$input" && -x "$input" ]]; then
+        abs=$(bigbrother_resolve_executable_path "$input") || return 1
+        workdir=$(dirname "$abs")
+    elif abs=$(command -v -- "$input" 2>/dev/null); then
+        workdir="$PWD"
+    else
+        echo "bigbrother: '$input' is not a defined service, a path, or a command on PATH" >&2
         return 1
-    }
-    bigbrother_start "$input"
-    echo "bigbrother: started '$input'"
+    fi
+
+    local name
+    name=$(bigbrother_name_from_path "$abs")
+
+    if bigbrother_is_defined "$name"; then
+        echo "bigbrother: '$name' is already a defined service; use 'bigbrother run $name'" >&2
+        return 1
+    fi
+    if bigbrother_is_transient "$name" 2>/dev/null && bigbrother_is_running "$name"; then
+        echo "bigbrother: '$name' is already running" >&2
+        return 1
+    fi
+
+    bigbrother_run_transient "$name" "$workdir" "$abs" "${@:2}"
+    echo "bigbrother: '$name' is running"
 }
 
 bigbrother_cmd_stop() {
