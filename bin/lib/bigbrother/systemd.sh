@@ -61,11 +61,52 @@ bigbrother_run_transient() {
         env_args+=(--setenv="$kv")
     done
 
+    # No Restart= here on purpose: `run` is ephemeral, one-shot — if it
+    # dies, it dies. Persistence (Restart=always) only comes from `add`
+    # or `enable`, which write a real unit file via BIGBROTHER_UNIT_TEMPLATE.
     systemd-run --user --quiet --unit="$name" --description="$name" \
-        --property="Restart=always" --property="RestartSec=5" \
         --working-directory="$workdir" \
         "${env_args[@]}" \
         -- "$@"
+}
+
+# Polls a just-launched unit's ActiveState for a short grace window so `run`
+# can report whether it actually survived instead of blindly saying
+# "running". Prints a verdict (and a log tail on failure) and returns
+# non-zero if it failed or exited with an error.
+bigbrother_verify_launch() {
+    local name="$1" attempts=20 sleep_for=0.1
+    local state result i
+
+    for ((i = 0; i < attempts; i++)); do
+        state=$(systemctl --user show -p ActiveState --value "$name.service" 2>/dev/null)
+        case "$state" in
+            active|activating|reloading)
+                sleep "$sleep_for"
+                continue
+                ;;
+            failed)
+                echo "bigbrother: '$name' failed to start" >&2
+                journalctl --user -u "$name.service" -n 20 --no-pager 2>/dev/null
+                return 1
+                ;;
+            inactive|deactivating)
+                result=$(systemctl --user show -p Result --value "$name.service" 2>/dev/null)
+                if [[ "$result" == success ]]; then
+                    echo "bigbrother: '$name' ran and exited successfully"
+                    return 0
+                fi
+                echo "bigbrother: '$name' exited with an error (${result:-unknown})" >&2
+                journalctl --user -u "$name.service" -n 20 --no-pager 2>/dev/null
+                return 1
+                ;;
+            *)
+                sleep "$sleep_for"
+                ;;
+        esac
+    done
+
+    echo "bigbrother: '$name' is running"
 }
 
 bigbrother_start() {

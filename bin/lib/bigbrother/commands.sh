@@ -200,9 +200,19 @@ bigbrother_promote_transient() {
 
 bigbrother_cmd_add() {
     local input="" exec_flag="" workdir_flag="" arg
+    local -a command_args=()
+    local command_mode=false
+
     while (($#)); do
         arg="$1"
         case "$arg" in
+            -c|--command)
+                shift
+                (($# > 0)) || { echo "bigbrother: -c/--command requires a command" >&2; return 1; }
+                command_mode=true
+                command_args=("$@")
+                break
+                ;;
             --exec)      shift; exec_flag="${1:-}"
                          [[ -n "$exec_flag" ]] || { echo "bigbrother: --exec requires a value" >&2; return 1; } ;;
             --exec=*)    exec_flag="${arg#--exec=}" ;;
@@ -220,6 +230,12 @@ bigbrother_cmd_add() {
         esac
         shift
     done
+
+    if $command_mode; then
+        bigbrother_cmd_add_verified "$input" "$workdir_flag" "${command_args[@]}"
+        return
+    fi
+
     [[ -z "$input" ]] && { echo "Usage: bigbrother add <path|name> [--exec <cmd>] [--workdir <dir>]" >&2; return 1; }
 
     bigbrother_ensure_linger
@@ -252,8 +268,49 @@ bigbrother_cmd_add() {
     bigbrother_finalize_add "$suggested" "$body" "$promote_from"
 }
 
+# `bb add -c <command> [args...]` (optionally `bb add <name> -c <command>...`):
+# no editor. Test-runs the command as a transient unit and only persists +
+# enables it if bigbrother_verify_launch confirms it survived — the human
+# "try it, then save it" pipeline, automated.
+bigbrother_cmd_add_verified() {
+    local name="$1" workdir="${2:-$PWD}"
+    shift 2
+    (($# > 0)) || { echo "bigbrother: -c/--command requires a command" >&2; return 1; }
+
+    [[ -n "$name" ]] || name=$(basename -- "$1")
+    bigbrother_validate_name "$name" || return 1
+
+    if bigbrother_is_defined "$name"; then
+        echo "bigbrother: '$name' already exists" >&2
+        return 1
+    fi
+    if bigbrother_is_transient "$name" 2>/dev/null; then
+        echo "bigbrother: '$name' is already running as a transient unit" >&2
+        return 1
+    fi
+
+    bigbrother_ensure_linger
+
+    local exec_start="" arg
+    for arg in "$@"; do
+        exec_start+="${exec_start:+ }$(printf '%q' "$arg")"
+    done
+
+    bigbrother_run_transient "$name" "$workdir" "$@"
+    if ! bigbrother_verify_launch "$name"; then
+        echo "bigbrother: '$name' did not survive its trial run — not saved" >&2
+        return 1
+    fi
+
+    bigbrother_is_running "$name" && { bigbrother_stop "$name" 2>/dev/null || true; }
+
+    bigbrother_write_unit "$name" "$exec_start" "$workdir" || return 1
+    bigbrother_daemon_reload
+    bigbrother_enable_now "$name"
+    bigbrother_status_line + "$name"
+}
+
 # Opens the editor draft, then writes + enables + starts the result.
-# Shared tail for `add` and the bare-command shortcut.
 bigbrother_finalize_add() {
     local suggested="$1" body="$2" promote_from="${3:-}"
 
@@ -271,26 +328,6 @@ bigbrother_finalize_add() {
     bigbrother_daemon_reload
     bigbrother_enable_now "$name"
     bigbrother_status_line + "$name"
-}
-
-# Entry point for the bare `bb <command> [args...]` shortcut — anything that
-# isn't a known subcommand or an existing service name is treated as a
-# command line, prefilled into the add draft as ExecStart so the user just
-# picks a name and goes.
-bigbrother_cmd_add_command() {
-    (($# > 0)) || { echo "Usage: bb <command> [args...]" >&2; return 1; }
-
-    bigbrother_ensure_linger
-
-    local exec_start="" suggested body arg
-    for arg in "$@"; do
-        exec_start+="${exec_start:+ }$(printf '%q' "$arg")"
-    done
-
-    suggested=$(basename -- "$1")
-    body=$(bigbrother_render_unit "$suggested" "$exec_start" "$PWD")
-
-    bigbrother_finalize_add "$suggested" "$body"
 }
 
 bigbrother_cmd_rm() {
@@ -311,8 +348,7 @@ bigbrother_cmd_enable() {
 
     if ! bigbrother_is_defined "$name" && ! bigbrother_is_transient "$name" 2>/dev/null; then
         # Not a known service — a path here means define + enable + start
-        # directly, no editor, mirroring how `bb ./binary` context-routes
-        # to `run` instead of erroring as an unknown command.
+        # directly, no editor.
         if [[ "$name" == */* ]] || [[ -f "$name" ]]; then
             local abs svc_name
             abs=$(bigbrother_resolve_executable_path "$name") || return 1
@@ -360,7 +396,7 @@ bigbrother_cmd_run() {
     # Bare name, no extra args, already defined: just start it.
     if (($# == 1)) && bigbrother_is_defined "$input"; then
         bigbrother_start "$input"
-        echo "bigbrother: started '$input'"
+        bigbrother_verify_launch "$input"
         return
     fi
 
@@ -388,7 +424,7 @@ bigbrother_cmd_run() {
     fi
 
     bigbrother_run_transient "$name" "$workdir" "$abs" "${@:2}"
-    echo "bigbrother: '$name' is running"
+    bigbrother_verify_launch "$name"
 }
 
 bigbrother_cmd_stop() {
@@ -476,7 +512,6 @@ Usage: bigbrother [command]
        bb [command]
 
 Bare shortcuts:
-    bb <command> [args...]  Opens the add draft prefilled with it as ExecStart
     bb <name>               Watch a running service's live output
 
 Commands:
@@ -485,6 +520,9 @@ Commands:
     add, a <path|name>       Opens $EDITOR on a unit draft, then defines + enables + starts it
                               [--exec <cmd>] [--workdir <dir>] prefill the draft; a bare name
                               (no path) drafts empty and lets you fill in the rest in $EDITOR
+    add, a [name] -c <cmd> [args...]
+                              No editor: test-runs <cmd> as a transient unit first, and only
+                              persists + enables it if it survives (see `run`'s verification)
     rm, remove <name>        Stop, disable, and delete a service definition
     mv, rename <old> <new>   Rename a defined service, preserving its enabled/active state
     enable, up <name|path>   Enable + start; a path defines it first, no editor

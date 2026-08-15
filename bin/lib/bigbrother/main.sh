@@ -48,10 +48,9 @@ bigbrother_main() {
                 bigbrother_cmd_watch "$command" "$@"
                 return
             fi
-            # Anything else is a command line, not a subcommand: `bb htop`,
-            # `bb ./script.sh --flag` — opens the add draft prefilled with
-            # it as ExecStart so you just pick a name and go.
-            bigbrother_cmd_add_command "$command" "$@"
+            echo "bigbrother: unknown command '$command'" >&2
+            bigbrother_cmd_help >&2
+            return 1
             ;;
     esac
 }
