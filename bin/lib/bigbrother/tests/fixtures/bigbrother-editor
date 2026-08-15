@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Stands in for $EDITOR in bigbrother's draft tests: keeps the '# bb-name:'
+# header bigbrother requires and replaces the unit body with $BIGBROTHER_TEST_BODY.
+
+set -euo pipefail
+
+target="$1"
+header=$(head -n1 "$target")
+{
+    printf '%s\n' "$header"
+    printf '%s\n' "${BIGBROTHER_TEST_BODY:?BIGBROTHER_TEST_BODY is not set}"
+} > "$target"

@@ -41,6 +41,30 @@ bigbrother_delete_unit() {
     rm -f -- "$(bigbrother_unit_path "$1")"
 }
 
+# Rewrites the first Description= line in place, so a renamed unit stops
+# announcing its old identity in the journal ("Started agentctl." for what is
+# now master-agent.service). Done with a read loop rather than sed because the
+# replacement is interpolated and sed would need escaping. A unit with no
+# Description= is left alone: systemd then falls back to the unit name, which
+# after a rename is already the right answer.
+bigbrother_set_description() {
+    local path="$1" name="$2" temp line replaced=false
+
+    temp="$path.bigbrother.$$"
+    {
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if ! $replaced && [[ "$line" == Description=* ]]; then
+                printf 'Description=%s\n' "$name"
+                replaced=true
+            else
+                printf '%s\n' "$line"
+            fi
+        done
+    } < "$path" > "$temp" || { rm -f -- "$temp"; return 1; }
+
+    mv -- "$temp" "$path" || { rm -f -- "$temp"; return 1; }
+}
+
 # bb's own identity field lives in a header line stripped before the body
 # ever touches disk or systemd-analyze — see bigbrother_edit_buffer.
 BIGBROTHER_NAME_PATTERN='^[a-z0-9][a-z0-9._-]*$'
@@ -112,6 +136,10 @@ bigbrother_rename_unit() {
 
     mv -- "$(bigbrother_unit_path "$old")" "$(bigbrother_unit_path "$new")" || {
         echo "bigbrother: failed to rename unit file" >&2
+        return 1
+    }
+    bigbrother_set_description "$(bigbrother_unit_path "$new")" "$new" || {
+        echo "bigbrother: renamed unit but failed to update its Description" >&2
         return 1
     }
     bigbrother_daemon_reload

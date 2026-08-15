@@ -2,27 +2,107 @@
 
 # One function per verb.
 
-bigbrother_resolve_abs() {
-    local path="$1"
-    [[ -e "$path" ]] || return 1
-    (cd "$(dirname "$path")" && printf '%s/%s\n' "$PWD" "$(basename "$path")")
+# `run` derives a service name from its command's binary and appends .1, .2, …
+# when that name is taken, so an ad-hoc launch never has to refuse over a name
+# collision. The cap only exists to keep a pathological loop bounded.
+BIGBROTHER_NAME_MAX_SUFFIX=99
+
+# A name is spoken for by an on-disk unit or by a loaded transient one. Both
+# matter: a transient unit shadows any file of the same name.
+bigbrother_name_taken() {
+    bigbrother_is_defined "$1" || bigbrother_is_transient "$1" 2>/dev/null
 }
 
-bigbrother_name_from_path() {
-    basename "$1"
-}
-
-# Resolves an on-disk path to its absolute form and checks it's executable.
-# Echoes the absolute path; prints an error and returns 1 otherwise. Shared
-# by add/enable/run so they all agree on what counts as a runnable path.
-bigbrother_resolve_executable_path() {
-    local input="$1" abs
-    abs=$(bigbrother_resolve_abs "$input") || {
-        echo "bigbrother: no such path '$input'" >&2
+# A service's default name is its command's basename — `agentctl run` → agentctl.
+# Deliberately does not sanitize: a basename that doesn't fit
+# BIGBROTHER_NAME_PATTERN is an error pointing at -n, not something to quietly
+# mangle into a name the caller never asked for.
+bigbrother_derive_name() {
+    local base
+    base=$(basename -- "$1")
+    bigbrother_validate_name "$base" 2>/dev/null || {
+        echo "bigbrother: cannot derive a service name from '$1'; pass -n <name>" >&2
         return 1
     }
-    [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
-    printf '%s\n' "$abs"
+    printf '%s\n' "$base"
+}
+
+bigbrother_free_name() {
+    local base="$1" candidate="$1" i=0
+    while bigbrother_name_taken "$candidate"; do
+        if ((++i > BIGBROTHER_NAME_MAX_SUFFIX)); then
+            echo "bigbrother: no free name for '$base' after $BIGBROTHER_NAME_MAX_SUFFIX attempts" >&2
+            return 1
+        fi
+        candidate="$base.$i"
+    done
+    printf '%s\n' "$candidate"
+}
+
+# Shared -n/-c/--workdir parser for `add` and `run`, so the two verbs can't
+# drift. They differ only in what a bare positional means: for `run` it opens
+# the command line, for `add` it is the service name — whose command can only
+# arrive via -c, which keeps `bb add <name>` unambiguously the editor path.
+# Everything after -c is taken verbatim, so `bb run agentctl run` doesn't try
+# to read that second `run` as a flag.
+# Results land in BB_ARG_NAME / BB_ARG_WORKDIR / BB_ARG_COMMAND.
+bigbrother_parse_launch_args() {
+    local positional="$1" arg
+    shift
+
+    BB_ARG_NAME=""
+    BB_ARG_WORKDIR=""
+    BB_ARG_COMMAND=()
+
+    while (($#)); do
+        arg="$1"
+        case "$arg" in
+            -c|--command)
+                shift
+                (($# > 0)) || { echo "bigbrother: -c/--command requires a command" >&2; return 1; }
+                BB_ARG_COMMAND=("$@")
+                return 0
+                ;;
+            -n|--name)
+                shift
+                [[ -n "${1:-}" ]] || { echo "bigbrother: -n/--name requires a value" >&2; return 1; }
+                BB_ARG_NAME="$1"
+                ;;
+            --name=*)    BB_ARG_NAME="${arg#--name=}" ;;
+            --workdir)
+                shift
+                [[ -n "${1:-}" ]] || { echo "bigbrother: --workdir requires a value" >&2; return 1; }
+                BB_ARG_WORKDIR="$1"
+                ;;
+            --workdir=*) BB_ARG_WORKDIR="${arg#--workdir=}" ;;
+            -*)          echo "bigbrother: unknown flag '$arg'" >&2; return 1 ;;
+            *)
+                if [[ "$positional" == command ]]; then
+                    BB_ARG_COMMAND=("$@")
+                    return 0
+                fi
+                [[ -z "$BB_ARG_NAME" ]] || {
+                    echo "bigbrother: unexpected argument '$arg'" >&2
+                    return 1
+                }
+                BB_ARG_NAME="$arg"
+                ;;
+        esac
+        shift
+    done
+}
+
+# The one launch path. `add` and `run` both come through here, so a service is
+# never persisted on the strength of a command that was never actually run.
+bigbrother_launch_transient() {
+    local name="$1" workdir="$2"
+    shift 2
+
+    bigbrother_run_transient "$name" "$workdir" "$@" || return 1
+    bigbrother_verify_launch "$name" || {
+        bigbrother_reset_failed "$name"
+        return 1
+    }
 }
 
 bigbrother_open_editor() {
@@ -107,18 +187,18 @@ bigbrother_edit_buffer() {
     bigbrother_discard_draft "$mode" "$name"
 }
 
-# Prints "+ name" (enabled/added), a dim "- name" (disabled), or a
-# strikethrough "x name" (removed) — mark is one of + - x. Shared by `ls`
-# and the add/enable/disable/rm command feedback so they all agree on what
-# each marker means. Styling is TTY-only; the ASCII mark itself always
-# stays so piped/logged output remains distinguishable and greppable.
+# Prints "+ name" (enabled/added), "~ name" (transient, live), a dim "- name"
+# (disabled), or a strikethrough "x name" (removed) — mark is one of + ~ - x.
+# Shared by `ls` and the add/run/enable/disable/rm command feedback so they all
+# agree on what each marker means. Styling is TTY-only; the ASCII mark itself
+# always stays so piped/logged output remains distinguishable and greppable.
 bigbrother_status_line() {
     local mark="$1" name="$2" style="" reset=""
 
-    if [[ "$mark" == + ]]; then
-        printf '+ %s\n' "$name"
-        return
-    fi
+    # + and ~ both mean "this is up", so neither is dimmed.
+    case "$mark" in
+        +|'~') printf '%s %s\n' "$mark" "$name"; return ;;
+    esac
 
     if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
         reset=$'\033[0m'
@@ -178,14 +258,20 @@ bigbrother_cmd_ls() {
     $found || { echo "No services."; return 0; }
 
     local n
-    for n in "${transient_names[@]}"; do printf '~ %s (transient)\n' "$n"; done
+    for n in "${transient_names[@]}"; do bigbrother_status_line '~' "$n"; done
     for n in "${enabled_names[@]}"; do bigbrother_status_line + "$n"; done
     for n in "${disabled_names[@]}"; do bigbrother_status_line - "$n"; done
 }
 
-# Promotes an already-running transient unit to a persisted one. The
-# transient unit shadows any on-disk file of the same name, so it must be
-# stopped before the persistent unit can be enabled.
+# Promotes an already-running transient unit to a persisted one, and is the
+# reason none of this resolves commands by hand: the ExecStart it reads back is
+# the one systemd actually launched, so it carries systemd-run's absolute path
+# resolution. Rebuilding that string from argv instead is what used to persist
+# a bare name the manager's own PATH couldn't find — a unit that 203/EXEC'd
+# forever despite having passed its own verification.
+#
+# The transient unit shadows any on-disk file of the same name, so it has to be
+# fully stopped before the persistent unit can load.
 bigbrother_promote_transient() {
     local name="$1" exec_start workdir
     exec_start=$(bigbrother_exec_start_command "$name") || {
@@ -193,121 +279,90 @@ bigbrother_promote_transient() {
         return 1
     }
     workdir=$(bigbrother_working_directory "$name")
+
     bigbrother_stop "$name" 2>/dev/null || true
+    bigbrother_wait_stopped "$name" || {
+        echo "bigbrother: transient '$name' did not stop; refusing to persist it" >&2
+        return 1
+    }
+    bigbrother_reset_failed "$name"
+
     bigbrother_write_unit "$name" "$exec_start" "$workdir" || return 1
     bigbrother_daemon_reload
 }
 
+# `add` is `run` + `enable`. A name is mandatory — unlike an ad-hoc `run`, a
+# persistent service is named deliberately rather than derived from whatever
+# binary happened to start it.
 bigbrother_cmd_add() {
-    local input="" exec_flag="" workdir_flag="" arg
-    local -a command_args=()
-    local command_mode=false
+    bigbrother_parse_launch_args name "$@" || return 1
 
-    while (($#)); do
-        arg="$1"
-        case "$arg" in
-            -c|--command)
-                shift
-                (($# > 0)) || { echo "bigbrother: -c/--command requires a command" >&2; return 1; }
-                command_mode=true
-                command_args=("$@")
-                break
-                ;;
-            --exec)      shift; exec_flag="${1:-}"
-                         [[ -n "$exec_flag" ]] || { echo "bigbrother: --exec requires a value" >&2; return 1; } ;;
-            --exec=*)    exec_flag="${arg#--exec=}" ;;
-            --workdir)   shift; workdir_flag="${1:-}"
-                         [[ -n "$workdir_flag" ]] || { echo "bigbrother: --workdir requires a value" >&2; return 1; } ;;
-            --workdir=*) workdir_flag="${arg#--workdir=}" ;;
-            -*)          echo "bigbrother: unknown flag '$arg'" >&2; return 1 ;;
-            *)
-                if [[ -n "$input" ]]; then
-                    echo "bigbrother: unexpected argument '$arg'" >&2
-                    return 1
-                fi
-                input="$arg"
-                ;;
-        esac
-        shift
-    done
-
-    if $command_mode; then
-        bigbrother_cmd_add_verified "$input" "$workdir_flag" "${command_args[@]}"
-        return
-    fi
-
-    [[ -z "$input" ]] && { echo "Usage: bigbrother add <path|name> [--exec <cmd>] [--workdir <dir>]" >&2; return 1; }
+    local name="$BB_ARG_NAME"
+    [[ -n "$name" ]] || {
+        echo "Usage: bigbrother add <name> [-c <command> [args...]] [--workdir <dir>]" >&2
+        echo "bigbrother: a name is required; to run a path as a command use -c" >&2
+        return 1
+    }
+    bigbrother_validate_name "$name" || return 1
 
     bigbrother_ensure_linger
 
-    local suggested body promote_from=""
-
-    if bigbrother_is_transient "$input" 2>/dev/null; then
-        suggested="$input"
-        promote_from="$input"
-        local exec_start workdir
-        exec_start=$(bigbrother_exec_start_command "$input") || {
-            echo "bigbrother: could not read command from transient unit '$input'" >&2
-            return 1
-        }
-        workdir=$(bigbrother_working_directory "$input")
-        body=$(bigbrother_render_unit "$suggested" "${exec_flag:-$exec_start}" "${workdir_flag:-$workdir}")
-    elif [[ "$input" == */* ]] || [[ -f "$input" ]]; then
-        local abs
-        abs=$(bigbrother_resolve_executable_path "$input") || return 1
-        suggested=$(bigbrother_name_from_path "$abs")
-        body=$(bigbrother_render_unit "$suggested" "${exec_flag:-$abs}" "${workdir_flag:-$(dirname "$abs")}")
-    else
-        # Not a path — treat as a bare name and let the editor draft carry
-        # ExecStart/WorkingDirectory, optionally prefilled from flags.
-        bigbrother_validate_name "$input" || return 1
-        suggested="$input"
-        body=$(bigbrother_render_unit "$suggested" "$exec_flag" "${workdir_flag:-$PWD}")
+    if ((${#BB_ARG_COMMAND[@]} > 0)); then
+        bigbrother_add_verified "$name" "${BB_ARG_WORKDIR:-$PWD}" "${BB_ARG_COMMAND[@]}"
+        return
     fi
-
-    bigbrother_finalize_add "$suggested" "$body" "$promote_from"
-}
-
-# `bb add -c <command> [args...]` (optionally `bb add <name> -c <command>...`):
-# no editor. Test-runs the command as a transient unit and only persists +
-# enables it if bigbrother_verify_launch confirms it survived — the human
-# "try it, then save it" pipeline, automated.
-bigbrother_cmd_add_verified() {
-    local name="$1" workdir="${2:-$PWD}"
-    shift 2
-    (($# > 0)) || { echo "bigbrother: -c/--command requires a command" >&2; return 1; }
-
-    [[ -n "$name" ]] || name=$(basename -- "$1")
-    bigbrother_validate_name "$name" || return 1
 
     if bigbrother_is_defined "$name"; then
         echo "bigbrother: '$name' already exists" >&2
         return 1
     fi
+
+    # No command given. Promote a running transient of this name if that's what
+    # it is, otherwise open an empty draft for the caller to fill in.
+    local body
     if bigbrother_is_transient "$name" 2>/dev/null; then
-        echo "bigbrother: '$name' is already running as a transient unit" >&2
+        local exec_start
+        exec_start=$(bigbrother_exec_start_command "$name") || {
+            echo "bigbrother: could not read command from transient unit '$name'" >&2
+            return 1
+        }
+        body=$(bigbrother_render_unit "$name" "$exec_start" \
+            "${BB_ARG_WORKDIR:-$(bigbrother_working_directory "$name")}")
+        bigbrother_finalize_add "$name" "$body" "$name"
+        return
+    fi
+
+    body=$(bigbrother_render_unit "$name" "" "${BB_ARG_WORKDIR:-$PWD}")
+    bigbrother_finalize_add "$name" "$body"
+}
+
+# `bb add <name> -c <command> [args...]`: no editor. Runs the command as a
+# transient unit and only persists it once bigbrother_verify_launch confirms it
+# survived — the human "try it, then save it" pipeline, automated. The unit body
+# comes from bigbrother_promote_transient reading the live unit back, never from
+# rebuilding the command here; see that function for why that distinction is
+# load-bearing.
+bigbrother_add_verified() {
+    local name="$1" workdir="$2"
+    shift 2
+
+    if bigbrother_name_taken "$name"; then
+        echo "bigbrother: '$name' already exists" >&2
         return 1
     fi
 
-    bigbrother_ensure_linger
+    bigbrother_launch_transient "$name" "$workdir" "$@" || return 1
+    bigbrother_promote_transient "$name" || return 1
 
-    local exec_start="" arg
-    for arg in "$@"; do
-        exec_start+="${exec_start:+ }$(printf '%q' "$arg")"
-    done
-
-    bigbrother_run_transient "$name" "$workdir" "$@"
-    if ! bigbrother_verify_launch "$name"; then
-        systemctl --user reset-failed "$name.service" 2>/dev/null || true
-        printf '~ %s\n' "$name" >&2
+    # The editor paths get this from bigbrother_edit_buffer; the -c path is the
+    # one that would otherwise persist a unit nothing ever checked.
+    bigbrother_verify_unit "$(bigbrother_unit_path "$name")" || {
+        bigbrother_delete_unit "$name"
+        bigbrother_daemon_reload
         return 1
-    fi
+    }
 
-    bigbrother_is_running "$name" && { bigbrother_stop "$name" 2>/dev/null || true; }
-
-    bigbrother_write_unit "$name" "$exec_start" "$workdir" || return 1
-    bigbrother_daemon_reload
-    bigbrother_enable_now "$name"
+    bigbrother_enable_now "$name" || return 1
     bigbrother_status_line + "$name"
 }
 
@@ -323,20 +378,54 @@ bigbrother_finalize_add() {
         return 1
     fi
 
-    [[ -n "$promote_from" ]] && { bigbrother_stop "$promote_from" 2>/dev/null || true; }
+    if [[ -n "$promote_from" ]]; then
+        bigbrother_stop "$promote_from" 2>/dev/null || true
+        bigbrother_wait_stopped "$promote_from" || {
+            echo "bigbrother: transient '$promote_from' did not stop; refusing to persist it" >&2
+            return 1
+        }
+        bigbrother_reset_failed "$promote_from"
+    fi
 
     bigbrother_write_unit_body "$name" "$BB_RESULT_BODY" || return 1
     bigbrother_daemon_reload
-    bigbrother_enable_now "$name"
+    bigbrother_enable_now "$name" || return 1
     bigbrother_status_line + "$name"
 }
 
 bigbrother_cmd_rm() {
     local name="${1:-}"
     [[ -z "$name" ]] && { echo "Usage: bigbrother rm <name>" >&2; return 1; }
-    bigbrother_is_defined "$name" || { echo "bigbrother: '$name' is not defined" >&2; return 1; }
 
-    bigbrother_disable_now "$name" 2>/dev/null
+    # A transient unit has no file to delete — stopping it *is* removing it.
+    # Without this branch a name `ls` shows can't be removed at all.
+    if ! bigbrother_is_defined "$name"; then
+        if ! bigbrother_is_transient "$name" 2>/dev/null; then
+            echo "bigbrother: '$name' is not defined" >&2
+            return 1
+        fi
+        bigbrother_stop "$name" || {
+            echo "bigbrother: failed to stop transient '$name'" >&2
+            return 1
+        }
+        bigbrother_reset_failed "$name"
+        bigbrother_status_line x "$name"
+        return 0
+    fi
+
+    # Deleting the unit file while the service is still up would orphan the
+    # process with nothing left to manage it, so the teardown is checked and
+    # the file is kept on any failure rather than the status being swallowed.
+    bigbrother_disable_now "$name" || {
+        echo "bigbrother: failed to disable '$name'; unit file kept" >&2
+        return 1
+    }
+    bigbrother_wait_stopped "$name" || {
+        echo "bigbrother: '$name' did not stop; unit file kept" >&2
+        return 1
+    }
+    bigbrother_reset_failed "$name"
+
     bigbrother_delete_unit "$name"
     bigbrother_daemon_reload
     bigbrother_status_line x "$name"
@@ -344,38 +433,19 @@ bigbrother_cmd_rm() {
 
 bigbrother_cmd_enable() {
     local name="${1:-}"
-    [[ -z "$name" ]] && { echo "Usage: bigbrother enable <name|path>" >&2; return 1; }
+    [[ -z "$name" ]] && { echo "Usage: bigbrother enable <name>" >&2; return 1; }
     bigbrother_ensure_linger
 
-    if ! bigbrother_is_defined "$name" && ! bigbrother_is_transient "$name" 2>/dev/null; then
-        # Not a known service — a path here means define + enable + start
-        # directly, no editor.
-        if [[ "$name" == */* ]] || [[ -f "$name" ]]; then
-            local abs svc_name
-            abs=$(bigbrother_resolve_executable_path "$name") || return 1
-            svc_name=$(bigbrother_name_from_path "$abs")
-
-            if bigbrother_is_defined "$svc_name"; then
-                echo "bigbrother: '$svc_name' already exists" >&2
-                return 1
-            fi
-
-            bigbrother_write_unit "$svc_name" "$abs" "$(dirname "$abs")" || return 1
-            bigbrother_daemon_reload
-            bigbrother_enable_now "$svc_name"
-            bigbrother_status_line + "$svc_name"
-            return 0
-        fi
-
-        echo "bigbrother: '$name' is not defined" >&2
-        return 1
-    fi
-
     if ! bigbrother_is_defined "$name"; then
+        if ! bigbrother_is_transient "$name" 2>/dev/null; then
+            echo "bigbrother: '$name' is not defined" >&2
+            echo "bigbrother: to define one: bigbrother add $name -c <command>" >&2
+            return 1
+        fi
         bigbrother_promote_transient "$name" || return 1
     fi
 
-    bigbrother_enable_now "$name"
+    bigbrother_enable_now "$name" || return 1
     bigbrother_status_line + "$name"
 }
 
@@ -388,43 +458,44 @@ bigbrother_cmd_disable() {
 }
 
 bigbrother_cmd_run() {
-    (($# > 0)) || { echo "Usage: bigbrother run <command|path|name> [args...]" >&2; return 1; }
-    local input="$1"
+    bigbrother_parse_launch_args command "$@" || return 1
+    ((${#BB_ARG_COMMAND[@]} > 0)) || {
+        echo "Usage: bigbrother run [-n <name>] <command> [args...]" >&2
+        return 1
+    }
 
     bigbrother_ensure_linger
 
-    # Bare name, no extra args, already defined: just start it.
-    if (($# == 1)) && bigbrother_is_defined "$input"; then
-        bigbrother_start "$input"
-        bigbrother_verify_launch "$input"
-        return
-    fi
-
-    local abs workdir
-    if [[ "$input" == */* ]] || [[ -f "$input" && -x "$input" ]]; then
-        abs=$(bigbrother_resolve_executable_path "$input") || return 1
-        workdir=$(dirname "$abs")
-    elif abs=$(command -v -- "$input" 2>/dev/null); then
-        workdir="$PWD"
-    else
-        echo "bigbrother: '$input' is not a defined service, a path, or a command on PATH" >&2
-        return 1
+    # The registry is consulted for exactly one shape: a lone, already-defined
+    # name, meaning "start that service". Any further argument proves the input
+    # is a command line, so a same-named service must not shadow it.
+    if ((${#BB_ARG_COMMAND[@]} == 1)) && [[ -z "$BB_ARG_NAME" ]] &&
+        bigbrother_is_defined "${BB_ARG_COMMAND[0]}"; then
+        local defined="${BB_ARG_COMMAND[0]}"
+        bigbrother_start "$defined" || return 1
+        bigbrother_verify_launch "$defined" || return 1
+        [[ "$BB_LAUNCH_STATE" == running ]] && bigbrother_status_line + "$defined"
+        return 0
     fi
 
     local name
-    name=$(bigbrother_name_from_path "$abs")
-
-    if bigbrother_is_defined "$name"; then
-        echo "bigbrother: '$name' is already a defined service; use 'bigbrother run $name'" >&2
-        return 1
+    if [[ -n "$BB_ARG_NAME" ]]; then
+        bigbrother_validate_name "$BB_ARG_NAME" || return 1
+        if bigbrother_name_taken "$BB_ARG_NAME"; then
+            echo "bigbrother: '$BB_ARG_NAME' already exists" >&2
+            return 1
+        fi
+        name="$BB_ARG_NAME"
+    else
+        # An explicit name must be honoured or refused; a derived one just steps
+        # aside, so repeat runs of the same binary never collide.
+        name=$(bigbrother_derive_name "${BB_ARG_COMMAND[0]}") || return 1
+        name=$(bigbrother_free_name "$name") || return 1
     fi
-    if bigbrother_is_transient "$name" 2>/dev/null && bigbrother_is_running "$name"; then
-        echo "bigbrother: '$name' is already running" >&2
-        return 1
-    fi
 
-    bigbrother_run_transient "$name" "$workdir" "$abs" "${@:2}"
-    bigbrother_verify_launch "$name"
+    bigbrother_launch_transient "$name" "${BB_ARG_WORKDIR:-$PWD}" "${BB_ARG_COMMAND[@]}" || return 1
+    [[ "$BB_LAUNCH_STATE" == running ]] && bigbrother_status_line '~' "$name"
+    return 0
 }
 
 bigbrother_cmd_stop() {
@@ -514,26 +585,35 @@ Usage: bigbrother [command]
 Bare shortcuts:
     bb <name>               Watch a running service's live output
 
+Markers:
+    + enabled   ~ transient (live)   - disabled   x removed
+
 Commands:
-    ls, list                List all services (enabled plain, disabled dim, transient marked)
+    ls, list                List all services
     get, g <name>            Show details (status, command, workdir, unit path) for one service
-    add, a <path|name>       Opens $EDITOR on a unit draft, then defines + enables + starts it
-                              [--exec <cmd>] [--workdir <dir>] prefill the draft; a bare name
-                              (no path) drafts empty and lets you fill in the rest in $EDITOR
-    add, a [name] -c <cmd> [args...]
-                              No editor: test-runs <cmd> as a transient unit first, and only
-                              persists + enables it if it survives (see `run`'s verification)
-    rm, remove <name>        Stop, disable, and delete a service definition
+    run [-n <name>] <cmd> [args...]
+                              Run now as a transient unit and confirm it survived. Names itself
+                              after the binary, appending .1/.2 when taken; -n names it outright.
+                              A lone already-defined name instead just starts that service.
+    add, a <name> -c <cmd> [args...]
+                              run + enable: runs <cmd> transiently first and only persists it
+                              if it survives. The saved command is read back off the unit that
+                              actually ran, so it can never differ from the one verified.
+    add, a <name>            No -c: opens $EDITOR on a unit draft, then defines + enables it.
+                              Promotes a live transient of that name if one exists.
+    rm, remove <name>        Stop, disable, and delete a service (or stop a transient)
     mv, rename <old> <new>   Rename a defined service, preserving its enabled/active state
-    enable, up <name|path>   Enable + start; a path defines it first, no editor
+    enable, up <name>        Enable + start; promotes a transient of that name first
     disable, down <name>     Disable + stop (definition kept)
-    run <path|name>          Run now — transient if a path, start if a defined name
     stop <name>               Stop now (stays defined)
     restart <name>
     watch, tail, attach <name>  Live view of the process output (same as `bb <name>`)
     logs <name> [-f] [--raw]  Past output; -f follows, --raw adds journald timestamps
     edit, e <name>             Opens $EDITOR on the unit; a changed 'bb-name' header renames it
     help, -h, --help
+
+Both run and add take --workdir <dir>; the default is the directory you invoke from,
+not wherever the binary happens to live. A path is just a command: pass it to -c.
 
 All operations are systemd --user (no sudo).
 EOF

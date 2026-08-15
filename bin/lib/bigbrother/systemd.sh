@@ -2,6 +2,12 @@
 
 # All systemctl/systemd-run/loginctl calls live here.
 
+# Unit state is reported asynchronously, so both "did it survive startup?" and
+# "is it really down?" are polls rather than single reads.
+BIGBROTHER_POLL_INTERVAL=0.1
+BIGBROTHER_LAUNCH_POLL_ATTEMPTS=20
+BIGBROTHER_STOP_POLL_ATTEMPTS=30
+
 bigbrother_ensure_linger() {
     local state
     state=$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)
@@ -70,19 +76,25 @@ bigbrother_run_transient() {
         -- "$@"
 }
 
-# Polls a just-launched unit's ActiveState for a short grace window so `run`
-# can report whether it actually survived instead of blindly saying
-# "running". Prints a verdict (and a log tail on failure) and returns
-# non-zero if it failed or exited with an error.
+# Polls a just-launched unit's ActiveState for a short grace window so callers
+# can tell whether it actually survived instead of blindly reporting success.
+# Stays silent when the unit is still up — the caller owns that status line, so
+# that a success can never be confused with a name-collision error the way
+# "'x' is running" and "'x' is already running" once were. Prints a log tail
+# and returns non-zero if it failed or exited with an error. On success reports
+# which kind of success it was in BB_LAUNCH_STATE (running|exited), since a
+# long-lived service and a one-shot that finished need different confirmations.
 bigbrother_verify_launch() {
-    local name="$1" attempts=20 sleep_for=0.1
+    local name="$1"
     local state result i
 
-    for ((i = 0; i < attempts; i++)); do
+    BB_LAUNCH_STATE=""
+
+    for ((i = 0; i < BIGBROTHER_LAUNCH_POLL_ATTEMPTS; i++)); do
         state=$(systemctl --user show -p ActiveState --value "$name.service" 2>/dev/null)
         case "$state" in
             active|activating|reloading)
-                sleep "$sleep_for"
+                sleep "$BIGBROTHER_POLL_INTERVAL"
                 continue
                 ;;
             failed)
@@ -93,6 +105,7 @@ bigbrother_verify_launch() {
             inactive|deactivating)
                 result=$(systemctl --user show -p Result --value "$name.service" 2>/dev/null)
                 if [[ "$result" == success ]]; then
+                    BB_LAUNCH_STATE=exited
                     echo "bigbrother: '$name' ran and exited successfully"
                     return 0
                 fi
@@ -101,12 +114,35 @@ bigbrother_verify_launch() {
                 return 1
                 ;;
             *)
-                sleep "$sleep_for"
+                sleep "$BIGBROTHER_POLL_INTERVAL"
                 ;;
         esac
     done
 
-    echo "bigbrother: '$name' is running"
+    BB_LAUNCH_STATE=running
+}
+
+# `systemctl stop` returns once its job completes, but a Restart=always unit can
+# still be settling out of auto-restart. Confirms the unit is really down before
+# a caller deletes the unit file out from under a live process.
+bigbrother_wait_stopped() {
+    local name="$1" state i
+
+    for ((i = 0; i < BIGBROTHER_STOP_POLL_ATTEMPTS; i++)); do
+        state=$(systemctl --user show -p ActiveState --value "$name.service" 2>/dev/null)
+        case "$state" in
+            inactive|failed|"") return 0 ;;
+        esac
+        sleep "$BIGBROTHER_POLL_INTERVAL"
+    done
+    return 1
+}
+
+# Clears a unit's failed state so it stops occupying `systemctl --user --failed`
+# after bigbrother has finished with it. Never fatal: there may be nothing to
+# clear, which is the normal case.
+bigbrother_reset_failed() {
+    systemctl --user reset-failed "$1.service" 2>/dev/null || true
 }
 
 bigbrother_start() {

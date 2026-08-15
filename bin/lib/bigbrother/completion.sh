@@ -22,7 +22,22 @@ _bigbrother() {
         return
     fi
 
+    # `run` and `add` take a command line, so past their flags there is nothing
+    # service-shaped left to complete — hand those words to command completion.
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "-n -c --name --command --workdir" -- "$cur"))
+        return
+    fi
+
     case "$prev" in
+        -c|--command)
+            COMPREPLY=($(compgen -c -- "$cur"))
+            ;;
+        --workdir)
+            COMPREPLY=($(compgen -d -- "$cur"))
+            ;;
+        -n|--name)
+            ;;
         edit|e|rm|remove|mv|rename|enable|up|disable|down|run|stop|restart|logs|watch|tail|attach)
             COMPREPLY=($(compgen -W "$(_bigbrother_services)" -- "$cur"))
             ;;
