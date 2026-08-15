@@ -8,6 +8,7 @@ Description=%s
 [Service]
 ExecStart=%s
 WorkingDirectory=%s
+Environment=%s
 Restart=always
 RestartSec=5
 
@@ -20,7 +21,8 @@ bigbrother_write_unit() {
     path=$(bigbrother_unit_path "$name")
 
     # shellcheck disable=SC2059
-    printf "$BIGBROTHER_UNIT_TEMPLATE" "$name" "$exec_start" "$workdir" > "$path" || {
+    printf "$BIGBROTHER_UNIT_TEMPLATE" \
+        "$name" "$exec_start" "$workdir" "${BIGBROTHER_SERVICE_ENV[*]}" > "$path" || {
         echo "bigbrother: failed to write $path" >&2
         return 1
     }

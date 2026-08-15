@@ -55,9 +55,16 @@ bigbrother_transient_names() {
 bigbrother_run_transient() {
     local name="$1" workdir="$2"
     shift 2
-    systemd-run --user --unit="$name" --description="$name" \
+
+    local -a env_args=() kv
+    for kv in "${BIGBROTHER_SERVICE_ENV[@]}"; do
+        env_args+=(--setenv="$kv")
+    done
+
+    systemd-run --user --quiet --unit="$name" --description="$name" \
         --property="Restart=always" --property="RestartSec=5" \
         --working-directory="$workdir" \
+        "${env_args[@]}" \
         -- "$@"
 }
 
@@ -82,12 +89,15 @@ bigbrother_disable_now() {
 }
 
 bigbrother_logs() {
-    local name="$1" follow="${2:-false}"
-    if $follow; then
-        journalctl --user -u "$name.service" -f
-    else
-        journalctl --user -u "$name.service"
-    fi
+    local name="$1" follow="${2:-false}" raw="${3:-false}"
+    local -a args=(--user -u "$name.service")
+
+    # `-o cat` prints the bare message, no timestamp/host/unit prefix — what the
+    # process actually wrote, ANSI colors included.
+    if ! $raw; then args+=(-o cat); fi
+    if $follow; then args+=(-f); fi
+
+    journalctl "${args[@]}"
 }
 
 bigbrother_edit() {

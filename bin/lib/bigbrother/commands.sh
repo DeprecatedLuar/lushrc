@@ -45,25 +45,32 @@ bigbrother_cmd_ls() {
     for n in "${transient_names[@]}"; do printf '%s (transient)\n' "$n"; done
 }
 
+# Promotes an already-running transient unit to a persisted one. The
+# transient unit shadows any on-disk file of the same name, so it must be
+# stopped before the persistent unit can be enabled.
+bigbrother_promote_transient() {
+    local name="$1" exec_start workdir
+    exec_start=$(bigbrother_exec_start_command "$name") || {
+        echo "bigbrother: could not read command from transient unit '$name'" >&2
+        return 1
+    }
+    workdir=$(bigbrother_working_directory "$name")
+    bigbrother_stop "$name" 2>/dev/null || true
+    bigbrother_write_unit "$name" "$exec_start" "$workdir" || return 1
+    bigbrother_daemon_reload
+}
+
 bigbrother_cmd_add() {
     local input="${1:-}"
     [[ -z "$input" ]] && { echo "Usage: bigbrother add <path|transient-name>" >&2; return 1; }
 
     bigbrother_ensure_linger
 
-    local name exec_start workdir
+    local name
 
     if bigbrother_is_transient "$input" 2>/dev/null; then
-        # Promote an already-running transient unit. The transient unit shadows
-        # any on-disk file of the same name, so it must be stopped before the
-        # persistent unit can be enabled.
         name="$input"
-        exec_start=$(bigbrother_exec_start_command "$name") || {
-            echo "bigbrother: could not read command from transient unit '$name'" >&2
-            return 1
-        }
-        workdir=$(bigbrother_working_directory "$name")
-        bigbrother_stop "$name" 2>/dev/null || true
+        bigbrother_promote_transient "$name" || return 1
     else
         local abs
         abs=$(bigbrother_resolve_abs "$input") || {
@@ -72,12 +79,10 @@ bigbrother_cmd_add() {
         }
         [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
         name=$(bigbrother_name_from_path "$abs")
-        exec_start="$abs"
-        workdir=$(dirname "$abs")
+        bigbrother_write_unit "$name" "$abs" "$(dirname "$abs")" || return 1
+        bigbrother_daemon_reload
     fi
 
-    bigbrother_write_unit "$name" "$exec_start" "$workdir" || return 1
-    bigbrother_daemon_reload
     bigbrother_enable_now "$name"
     echo "bigbrother: added and started '$name'"
 }
@@ -96,8 +101,17 @@ bigbrother_cmd_rm() {
 bigbrother_cmd_enable() {
     local name="${1:-}"
     [[ -z "$name" ]] && { echo "Usage: bigbrother enable <name>" >&2; return 1; }
-    bigbrother_is_defined "$name" || { echo "bigbrother: '$name' is not defined" >&2; return 1; }
     bigbrother_ensure_linger
+
+    if ! bigbrother_is_defined "$name"; then
+        bigbrother_is_transient "$name" 2>/dev/null || {
+            echo "bigbrother: '$name' is not defined" >&2
+            return 1
+        }
+        bigbrother_promote_transient "$name" || return 1
+        echo "bigbrother: promoted '$name' to a persisted service"
+    fi
+
     bigbrother_enable_now "$name"
     echo "bigbrother: enabled '$name'"
 }
@@ -135,7 +149,7 @@ bigbrother_cmd_run() {
         fi
 
         bigbrother_run_transient "$name" "$(dirname "$abs")" "$abs"
-        echo "bigbrother: running '$name' (transient, not persisted)"
+        echo "bigbrother: '$name' is running"
         return
     fi
 
@@ -163,10 +177,30 @@ bigbrother_cmd_restart() {
 }
 
 bigbrother_cmd_logs() {
-    local name="${1:-}" follow=false
-    [[ "${2:-}" == "-f" ]] && follow=true
-    [[ -z "$name" ]] && { echo "Usage: bigbrother logs <name> [-f]" >&2; return 1; }
-    bigbrother_logs "$name" "$follow"
+    local name="" follow=false raw=false arg
+    for arg in "$@"; do
+        case "$arg" in
+            -f|--follow) follow=true ;;
+            --raw)       raw=true ;;
+            -*)          echo "bigbrother: unknown flag '$arg'" >&2; return 1 ;;
+            *)
+                if [[ -n "$name" ]]; then
+                    echo "bigbrother: unexpected argument '$arg'" >&2
+                    return 1
+                fi
+                name="$arg"
+                ;;
+        esac
+    done
+
+    [[ -z "$name" ]] && { echo "Usage: bigbrother logs <name> [-f] [--raw]" >&2; return 1; }
+    bigbrother_logs "$name" "$follow" "$raw"
+}
+
+# `watch` is `logs -f` — the live view you get from a foregrounded process.
+bigbrother_cmd_watch() {
+    (($# > 0)) || { echo "Usage: bigbrother watch <name> [--raw]" >&2; return 1; }
+    bigbrother_cmd_logs "$@" -f
 }
 
 bigbrother_cmd_edit() {
@@ -182,8 +216,9 @@ bigbrother_cmd_help() {
 Usage: bigbrother [command]
        bb [command]
 
-Bare path shortcut:
+Bare shortcuts:
     bb ./binary            Run a binary now (transient, gone on reboot)
+    bb <name>              Watch a running service's live output
 
 Commands:
     ls, list                List all services (enabled plain, disabled dim, transient marked)
@@ -194,7 +229,8 @@ Commands:
     run <path|name>          Run now — transient if a path, start if a defined name
     stop <name>               Stop now (stays defined)
     restart <name>
-    logs <name> [-f]          Show/follow logs via journalctl
+    watch, tail, attach <name>  Live view of the process output (same as `bb <name>`)
+    logs <name> [-f] [--raw]  Past output; -f follows, --raw adds journald timestamps
     edit <name>                Edit the raw unit file, then daemon-reload
     help, -h, --help
 
