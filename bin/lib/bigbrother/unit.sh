@@ -60,14 +60,25 @@ bigbrother_validate_name() {
     fi
 }
 
+# Reduces systemd-analyze's raw verify output to one plain-English line per
+# problem: drops the redundant "Unit X has a bad unit file setting." wrapper,
+# and strips the temp-file path down to just its line number.
 bigbrother_verify_unit() {
-    local file="$1" output status=0
+    local file="$1" output status=0 line
     output=$(systemd-analyze --user verify "$file" 2>&1) || status=$?
-    if ((status != 0)); then
-        echo "bigbrother: unit syntax check failed:" >&2
-        printf '%s\n' "$output" >&2
-        return 1
-    fi
+    ((status == 0)) && return 0
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^Unit\ .*\ unit\ file\ setting\.$ ]] && continue
+        if [[ "$line" =~ ^[^:]+:([0-9]+):\ (.*)$ ]]; then
+            line="line ${BASH_REMATCH[1]}: ${BASH_REMATCH[2]}"
+        elif [[ "$line" =~ ^[^:]+\.service:\ (.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+        echo "bigbrother: $line" >&2
+    done <<< "$output"
+    return 1
 }
 
 bigbrother_draft_path() {

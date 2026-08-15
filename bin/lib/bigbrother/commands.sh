@@ -46,7 +46,14 @@ bigbrother_edit_buffer() {
 
     if [[ -f "$draft" ]]; then
         cp -- "$draft" "$temp"
-        echo "bigbrother: resuming draft for '$name' from a previous failed attempt" >&2
+        if [[ "$(head -n1 "$temp")" != "# bb-name: "* ]]; then
+            # The stashed draft lost its header line (e.g. the previous
+            # editor session deleted it) — restore it so the editor always
+            # opens with the header present instead of repeating the same
+            # "first line must stay" failure every resume.
+            { bigbrother_header_line "$name"; cat -- "$temp"; } > "${temp}.headered"
+            mv -- "${temp}.headered" "$temp"
+        fi
     else
         { bigbrother_header_line "$name"; printf '%s\n' "$body"; } > "$temp"
     fi
@@ -87,14 +94,57 @@ bigbrother_edit_buffer() {
     bigbrother_discard_draft "$mode" "$name"
 }
 
-bigbrother_cmd_ls() {
-    local name found=false dim="" reset=""
-    local -a enabled_names=() disabled_names=() transient_names=()
+# Prints "+ name" (enabled/added), a dim "- name" (disabled), or a
+# strikethrough "x name" (removed) — mark is one of + - x. Shared by `ls`
+# and the add/enable/disable/rm command feedback so they all agree on what
+# each marker means. Styling is TTY-only; the ASCII mark itself always
+# stays so piped/logged output remains distinguishable and greppable.
+bigbrother_status_line() {
+    local mark="$1" name="$2" style="" reset=""
+
+    if [[ "$mark" == + ]]; then
+        printf '+ %s\n' "$name"
+        return
+    fi
 
     if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-        dim=$'\033[2m'
         reset=$'\033[0m'
+        [[ "$mark" == x ]] && style=$'\033[2m\033[9m' || style=$'\033[2m'
     fi
+    printf '%s%s %s%s\n' "$style" "$mark" "$name" "$reset"
+}
+
+bigbrother_cmd_get() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && { echo "Usage: bigbrother get <name>" >&2; return 1; }
+
+    if bigbrother_is_transient "$name" 2>/dev/null; then
+        local running="stopped"
+        bigbrother_is_running "$name" && running="running"
+        printf "name     %s\n" "$name"
+        printf "type     transient\n"
+        printf "status   %s\n" "$running"
+        printf "command  %s\n" "$(bigbrother_exec_start_command "$name" 2>/dev/null)"
+        printf "workdir  %s\n" "$(bigbrother_working_directory "$name" 2>/dev/null)"
+        return 0
+    fi
+
+    bigbrother_is_defined "$name" || { echo "bigbrother: '$name' is not defined" >&2; return 1; }
+
+    local enabled="disabled" running="stopped"
+    bigbrother_is_enabled "$name" && enabled="enabled"
+    bigbrother_is_running "$name" && running="running"
+
+    printf "name     %s\n" "$name"
+    printf "status   %s / %s\n" "$enabled" "$running"
+    printf "command  %s\n" "$(bigbrother_exec_start_command "$name" 2>/dev/null)"
+    printf "workdir  %s\n" "$(bigbrother_working_directory "$name" 2>/dev/null)"
+    printf "unit     %s\n" "$(bigbrother_unit_path "$name")"
+}
+
+bigbrother_cmd_ls() {
+    local name found=false
+    local -a enabled_names=() disabled_names=() transient_names=()
 
     while IFS= read -r name; do
         [[ -z "$name" ]] && continue
@@ -116,8 +166,8 @@ bigbrother_cmd_ls() {
 
     local n
     for n in "${transient_names[@]}"; do printf '~ %s (transient)\n' "$n"; done
-    for n in "${enabled_names[@]}"; do printf '+ %s\n' "$n"; done
-    for n in "${disabled_names[@]}"; do printf '%s- %s%s\n' "$dim" "$n" "$reset"; done
+    for n in "${enabled_names[@]}"; do bigbrother_status_line + "$n"; done
+    for n in "${disabled_names[@]}"; do bigbrother_status_line - "$n"; done
 }
 
 # Promotes an already-running transient unit to a persisted one. The
@@ -136,8 +186,28 @@ bigbrother_promote_transient() {
 }
 
 bigbrother_cmd_add() {
-    local input="${1:-}"
-    [[ -z "$input" ]] && { echo "Usage: bigbrother add <path|transient-name>" >&2; return 1; }
+    local input="" exec_flag="" workdir_flag="" arg
+    while (($#)); do
+        arg="$1"
+        case "$arg" in
+            --exec)      shift; exec_flag="${1:-}"
+                         [[ -n "$exec_flag" ]] || { echo "bigbrother: --exec requires a value" >&2; return 1; } ;;
+            --exec=*)    exec_flag="${arg#--exec=}" ;;
+            --workdir)   shift; workdir_flag="${1:-}"
+                         [[ -n "$workdir_flag" ]] || { echo "bigbrother: --workdir requires a value" >&2; return 1; } ;;
+            --workdir=*) workdir_flag="${arg#--workdir=}" ;;
+            -*)          echo "bigbrother: unknown flag '$arg'" >&2; return 1 ;;
+            *)
+                if [[ -n "$input" ]]; then
+                    echo "bigbrother: unexpected argument '$arg'" >&2
+                    return 1
+                fi
+                input="$arg"
+                ;;
+        esac
+        shift
+    done
+    [[ -z "$input" ]] && { echo "Usage: bigbrother add <path|name> [--exec <cmd>] [--workdir <dir>]" >&2; return 1; }
 
     bigbrother_ensure_linger
 
@@ -152,8 +222,8 @@ bigbrother_cmd_add() {
             return 1
         }
         workdir=$(bigbrother_working_directory "$input")
-        body=$(bigbrother_render_unit "$suggested" "$exec_start" "$workdir")
-    else
+        body=$(bigbrother_render_unit "$suggested" "${exec_flag:-$exec_start}" "${workdir_flag:-$workdir}")
+    elif [[ "$input" == */* ]] || [[ -f "$input" ]]; then
         local abs
         abs=$(bigbrother_resolve_abs "$input") || {
             echo "bigbrother: no such path '$input'" >&2
@@ -161,7 +231,13 @@ bigbrother_cmd_add() {
         }
         [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
         suggested=$(bigbrother_name_from_path "$abs")
-        body=$(bigbrother_render_unit "$suggested" "$abs" "$(dirname "$abs")")
+        body=$(bigbrother_render_unit "$suggested" "${exec_flag:-$abs}" "${workdir_flag:-$(dirname "$abs")}")
+    else
+        # Not a path — treat as a bare name and let the editor draft carry
+        # ExecStart/WorkingDirectory, optionally prefilled from flags.
+        bigbrother_validate_name "$input" || return 1
+        suggested="$input"
+        body=$(bigbrother_render_unit "$suggested" "$exec_flag" "${workdir_flag:-$PWD}")
     fi
 
     bigbrother_edit_buffer add "$suggested" "$body" || return 1
@@ -177,7 +253,7 @@ bigbrother_cmd_add() {
     bigbrother_write_unit_body "$name" "$BB_RESULT_BODY" || return 1
     bigbrother_daemon_reload
     bigbrother_enable_now "$name"
-    echo "bigbrother: added and started '$name'"
+    bigbrother_status_line + "$name"
 }
 
 bigbrother_cmd_rm() {
@@ -188,7 +264,7 @@ bigbrother_cmd_rm() {
     bigbrother_disable_now "$name" 2>/dev/null
     bigbrother_delete_unit "$name"
     bigbrother_daemon_reload
-    echo "bigbrother: removed '$name'"
+    bigbrother_status_line x "$name"
 }
 
 bigbrother_cmd_enable() {
@@ -206,7 +282,7 @@ bigbrother_cmd_enable() {
     fi
 
     bigbrother_enable_now "$name"
-    echo "bigbrother: enabled '$name'"
+    bigbrother_status_line + "$name"
 }
 
 bigbrother_cmd_disable() {
@@ -214,7 +290,7 @@ bigbrother_cmd_disable() {
     [[ -z "$name" ]] && { echo "Usage: bigbrother disable <name>" >&2; return 1; }
     bigbrother_is_defined "$name" || { echo "bigbrother: '$name' is not defined" >&2; return 1; }
     bigbrother_disable_now "$name"
-    echo "bigbrother: disabled '$name'"
+    bigbrother_status_line - "$name"
 }
 
 bigbrother_cmd_run() {
@@ -345,7 +421,10 @@ Bare shortcuts:
 
 Commands:
     ls, list                List all services (enabled plain, disabled dim, transient marked)
+    get, g <name>            Show details (status, command, workdir, unit path) for one service
     add, a <path|name>       Opens $EDITOR on a unit draft, then defines + enables + starts it
+                              [--exec <cmd>] [--workdir <dir>] prefill the draft; a bare name
+                              (no path) drafts empty and lets you fill in the rest in $EDITOR
     rm, remove <name>        Stop, disable, and delete a service definition
     mv, rename <old> <new>   Rename a defined service, preserving its enabled/active state
     enable, up <name>        Enable + start (persists across reboot)

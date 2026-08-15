@@ -41,7 +41,7 @@ alias mitosis='echo "curl -fsSL https://raw.githubusercontent.com/DeprecatedLuar
 
 # Tool completions — guarded since bin/lib/<tool>/ may not be installed yet
 # on a fresh machine (lazy-install lifecycle, see lushrc CLAUDE.md).
-for _bashrc_completion in bigbrother cronotrigger; do
+for _bashrc_completion in bigbrother cronotrigger lsh; do
     _bashrc_completion_path="$BASHRC/bin/lib/$_bashrc_completion/completion.sh"
     [[ -r "$_bashrc_completion_path" ]] && source "$_bashrc_completion_path"
 done

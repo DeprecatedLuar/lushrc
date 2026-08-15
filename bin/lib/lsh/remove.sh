@@ -39,5 +39,5 @@ lsh_remove() {
     mv "$TMP" "$LSH_CONFIG"
     chmod 600 "$LSH_CONFIG"
 
-    echo "Removed: $NAME"
+    lsh_status_line x "$NAME"
 }

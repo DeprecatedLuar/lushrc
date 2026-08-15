@@ -254,6 +254,7 @@ lush version         # commit + age
 - **Grace handling**: `|| true` / `|| return 0` — scripts succeed even if dirs don't exist
 - **Configuration-as-code**: shell scripts, not YAML/TOML
 - **Git-ignored customization**: `modules/local.sh` for user-specific overrides
+- **Status-line grammar** (emerging convention, currently `bigbrother`/`bb`, `cronotrigger`/`ctg`, `lsh`): list and confirmation output uses a leading ASCII mark instead of prose — `+ name` (added/enabled/reachable), dim `- name` (disabled/unreachable), dim strikethrough `x name` (removed). Color/strikethrough styling is TTY-only (`[[ -t 1 && -z "${NO_COLOR:-}" ]]`); the ASCII mark itself is always printed so piped/logged output stays greppable (`grep '^+'`). Each tool implements its own `<tool>_status_line mark name` helper (e.g. `bigbrother_status_line`, `cronotrigger_status_line`, `lsh_status_line`) rather than sharing one across tools, since each has its own module-loading boundary. When adding a new tool with enable/disable/add/remove semantics, follow this grammar instead of inventing new prose messages.
 
 ## Architecture Reference
 

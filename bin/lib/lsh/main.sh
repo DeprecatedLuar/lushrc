@@ -10,9 +10,11 @@ SYSDIR="${SYSDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../system" && pwd)}
 source "$SYSDIR/shared/net.sh"
 source "$LIBDIR/lsh/unlock.sh"
 source "$LIBDIR/lsh/list.sh"
+source "$LIBDIR/lsh/get.sh"
 source "$LIBDIR/lsh/add.sh"
 source "$LIBDIR/lsh/edit.sh"
 source "$LIBDIR/lsh/remove.sh"
+source "$LIBDIR/lsh/mv.sh"
 source "$LIBDIR/lsh/keys.sh"
 source "$LIBDIR/lsh/tunnel.sh"
 source "$LIBDIR/lsh/connect.sh"
@@ -41,6 +43,11 @@ case "$1" in
         lsh_list "$@"
         exit $?
         ;;
+    get|g)
+        shift
+        lsh_get "$@"
+        exit $?
+        ;;
     status)
         shift
         lsh_list --status "$@"
@@ -64,6 +71,11 @@ case "$1" in
     remove|rm)
         shift
         lsh_remove "$@"
+        exit $?
+        ;;
+    mv|rename)
+        shift
+        lsh_mv "$@"
         exit $?
         ;;
     tunnel|t)
@@ -109,14 +121,18 @@ Commands:
                           keyfile looked up in ~/.ssh/public/<keyfile>.pub
                           Auto-detects the only key in ~/.ssh/public if none given
 
-  lsh add|a <name> <user@host[:port]> [-p port]
-                          Save SSH config entry to ~/.ssh/config.d/lsh
+  lsh add|a <name>        Prefills name, opens $EDITOR for host/user/port
+  lsh add|a <name> <[user@]host[:port]> [-p port]
+                          Direct: creates immediately, no editor
+                          (user and port optional, host required)
 
   lsh edit|e <name>       Edit an existing entry in $EDITOR (key=value scratch file)
-  lsh edit|e <name> <user@host[:port]> [-p port]
+  lsh edit|e <name> <[user@]host[:port]> [-p port]
                           Edit an existing entry inline (same syntax as add)
 
   lsh remove|rm <name>    Delete an entry from ~/.ssh/config.d/lsh
+
+  lsh get|g <name>        Show details (host, user, port) for a single entry
 
   lsh ls | lsh list       List connections, then dim unreachable ones interactively
   lsh list --status       Explicit status-check spelling

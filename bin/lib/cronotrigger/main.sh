@@ -43,6 +43,7 @@ cronotrigger_main() {
         add|a) cronotrigger_cmd_add "$@" ;;
         edit|e) cronotrigger_cmd_edit "$@" ;;
         list|ls) (($# == 0)) || { echo "Usage: cronotrigger list" >&2; return 1; }; cronotrigger_cmd_list ;;
+        get|g) cronotrigger_cmd_get "$@" ;;
         enable) cronotrigger_cmd_set_enabled "$@" true ;;
         disable) cronotrigger_cmd_set_enabled "$@" false ;;
         run) cronotrigger_cmd_run "$@" ;;

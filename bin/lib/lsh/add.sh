@@ -1,33 +1,67 @@
 #!/usr/bin/env bash
 # lsh add — save an SSH config entry to ~/.ssh/config.d/lsh
+#   lsh add                              interactive: opens $EDITOR on a key=value scratch file
+#   lsh add <name>                       interactive: name prefilled, opens $EDITOR for the rest
+#   lsh add <name> <[user@]host[:port]> [-p port]
+#                                         direct: creates immediately, no editor
+#                                         (user and port are optional, host is not)
 
 lsh_add() {
-    if [[ $# -lt 2 ]]; then
-        echo "Usage: lsh add <name> <user@host[:port]> [-p port]" >&2
-        return 1
-    fi
+    local NAME="${1:-}"
+    [[ $# -ge 1 ]] && shift
 
-    local NAME="$1" CONN="$2"
-    shift 2
+    local HOST="" USER="" PORT=""
 
-    # Parse port from -p flag or :port suffix
-    local PORT=""
-    if [[ "$1" == "-p" && -n "$2" ]]; then
-        PORT="$2"
-    elif [[ "$CONN" =~ :([0-9]+)$ ]]; then
-        PORT="${BASH_REMATCH[1]}"
-        CONN="${CONN%:*}"
-    fi
+    if [[ $# -gt 0 ]]; then
+        # Direct mode — connection info given, create immediately
+        local CONN="$1"
+        shift
 
-    # Parse user@host
-    local USER HOST
-    if [[ "$CONN" =~ ^([^@]+)@(.+)$ ]]; then
-        USER="${BASH_REMATCH[1]}"
-        HOST="${BASH_REMATCH[2]}"
+        if [[ "$1" == "-p" && -n "$2" ]]; then
+            PORT="$2"
+        elif [[ "$CONN" =~ :([0-9]+)$ ]]; then
+            PORT="${BASH_REMATCH[1]}"
+            CONN="${CONN%:*}"
+        fi
+
+        if [[ "$CONN" =~ ^([^@]+)@(.+)$ ]]; then
+            USER="${BASH_REMATCH[1]}"
+            HOST="${BASH_REMATCH[2]}"
+        else
+            HOST="$CONN"
+        fi
+
+        [[ -z "$NAME" || -z "$HOST" ]] && { echo "lsh add: name and host required" >&2; return 1; }
     else
-        echo "lsh: invalid format, expected user@host[:port]" >&2
-        return 1
+        # Interactive mode — key=value scratch file in $EDITOR, name prefilled if given
+        local SCRATCH
+        SCRATCH=$(mktemp)
+        {
+            echo "name=$NAME"
+            echo "host="
+            echo "user="
+            echo "port=22"
+        } > "$SCRATCH"
+
+        "${EDITOR:-vi}" "$SCRATCH"
+
+        local NEW_NAME="" NEW_HOST="" NEW_USER="" NEW_PORT=""
+        while IFS='=' read -r key val; do
+            case "$key" in
+                name) NEW_NAME="$val" ;;
+                host) NEW_HOST="$val" ;;
+                user) NEW_USER="$val" ;;
+                port) NEW_PORT="$val" ;;
+            esac
+        done < "$SCRATCH"
+        rm -f "$SCRATCH"
+
+        [[ -z "$NEW_NAME" || -z "$NEW_HOST" ]] && { echo "lsh add: name and host are required, aborting" >&2; return 1; }
+
+        NAME="$NEW_NAME" HOST="$NEW_HOST" USER="$NEW_USER" PORT="$NEW_PORT"
     fi
+
+    PORT="${PORT:-22}"
 
     # Ensure ~/.ssh/config.d/ exists
     mkdir -p ~/.ssh/config.d
@@ -54,10 +88,10 @@ lsh_add() {
         echo ""
         echo "Host $NAME"
         echo "    HostName $HOST"
-        echo "    User $USER"
+        [[ -n "$USER" ]] && echo "    User $USER"
         [[ -n "$PORT" ]] && echo "    Port $PORT"
     } >> "$LSH_CONFIG"
     chmod 600 "$LSH_CONFIG"
 
-    echo "Added: ssh $NAME → $USER@$HOST${PORT:+:$PORT}"
+    lsh_status_line + "$NAME"
 }

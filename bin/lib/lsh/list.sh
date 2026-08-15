@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 # lsh ls/list — list configured SSH connections, optionally checking reachability
 
+# Prints "+ name" (added/reachable), a dim "- name" (unreachable), or a dim
+# strikethrough "x name" (removed) — mark is one of + - x. Shared by
+# list/add/remove so they all agree on what each marker means. Styling is
+# TTY-only; the ASCII mark itself always stays so piped/logged output
+# remains distinguishable and greppable.
+lsh_status_line() {
+    local mark="$1" name="$2" style="" reset=""
+
+    if [[ "$mark" == + ]]; then
+        printf '+ %s\n' "$name"
+        return
+    fi
+
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+        reset=$'\033[0m'
+        [[ "$mark" == x ]] && style=$'\033[2m\033[9m' || style=$'\033[2m'
+    fi
+    printf '%s%s %s%s\n' "$style" "$mark" "$name" "$reset"
+}
+
 lsh_list_entries() {
     local f
     for f in ~/.ssh/config ~/.ssh/config.d/*; do

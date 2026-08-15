@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # lsh edit — edit an existing SSH config entry in ~/.ssh/config.d/lsh
-#   lsh edit <name>                              interactive: opens $EDITOR on a key=value scratch file
-#   lsh edit <name> <user@host[:port]> [-p port]  inline: same syntax as `lsh add`, no editor
+#   lsh edit <name>                                    interactive: opens $EDITOR on a key=value scratch file
+#   lsh edit <name> <[user@]host[:port]> [-p port]      inline: same syntax as `lsh add`, no editor
 
 lsh_edit() {
     if [[ $# -lt 1 ]]; then
-        echo "Usage: lsh edit <name> [user@host[:port]] [-p port]" >&2
+        echo "Usage: lsh edit <name> [[user@]host[:port]] [-p port]" >&2
         return 1
     fi
 
@@ -53,8 +53,7 @@ lsh_edit() {
             NEW_USER="${BASH_REMATCH[1]}"
             NEW_HOST="${BASH_REMATCH[2]}"
         else
-            echo "lsh: invalid format, expected user@host[:port]" >&2
-            return 1
+            NEW_HOST="$CONN"
         fi
     else
         # Interactive mode — key=value scratch file in $EDITOR
@@ -81,6 +80,8 @@ lsh_edit() {
     fi
 
     [[ -z "$NEW_NAME" || -z "$NEW_HOST" ]] && { echo "lsh edit: name and host are required, aborting" >&2; return 1; }
+
+    NEW_PORT="${NEW_PORT:-22}"
 
     # Rewrite the Host block in place
     local TMP

@@ -137,7 +137,7 @@ cronotrigger_cmd_add() {
     cronotrigger_reconcile_or_rollback cronotrigger_rollback_add || return 1
     unset -f cronotrigger_rollback_add
 
-    echo "Added $name"
+    cronotrigger_status_line + "$name"
 }
 
 cronotrigger_cmd_edit() {
@@ -199,14 +199,29 @@ cronotrigger_cmd_edit() {
     echo "Updated $name"
 }
 
-cronotrigger_cmd_list() {
-    local name found=false dim="" reset=""
-    local -a enabled_names=() disabled_names=()
+# Prints "+ name" (enabled/added), a dim "- name" (disabled), or a dim
+# strikethrough "x name" (removed) — mark is one of + - x. Shared by `list`
+# and the add/enable/disable/rm command feedback so they all agree on what
+# each marker means. Styling is TTY-only; the ASCII mark itself always
+# stays so piped/logged output remains distinguishable and greppable.
+cronotrigger_status_line() {
+    local mark="$1" name="$2" style="" reset=""
+
+    if [[ "$mark" == + ]]; then
+        printf '+ %s\n' "$name"
+        return
+    fi
 
     if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-        dim=$'\033[2m'
         reset=$'\033[0m'
+        [[ "$mark" == x ]] && style=$'\033[2m\033[9m' || style=$'\033[2m'
     fi
+    printf '%s%s %s%s\n' "$style" "$mark" "$name" "$reset"
+}
+
+cronotrigger_cmd_list() {
+    local name found=false
+    local -a enabled_names=() disabled_names=()
 
     while IFS= read -r name; do
         found=true
@@ -220,8 +235,29 @@ cronotrigger_cmd_list() {
     $found || { echo "No jobs."; return 0; }
 
     local n
-    for n in "${enabled_names[@]}"; do printf '+ %s\n' "$n"; done
-    for n in "${disabled_names[@]}"; do printf '%s- %s%s\n' "$dim" "$n" "$reset"; done
+    for n in "${enabled_names[@]}"; do cronotrigger_status_line + "$n"; done
+    for n in "${disabled_names[@]}"; do cronotrigger_status_line - "$n"; done
+}
+
+cronotrigger_cmd_get() {
+    local name="${1:-}" path
+
+    [[ -n "$name" && $# -eq 1 ]] || { echo "Usage: cronotrigger get <name>" >&2; return 1; }
+    cronotrigger_validate_name "$name" || return 1
+    path="$(cronotrigger_job_path "$name")"
+    [[ -f "$path" ]] || { echo "cronotrigger: job '$name' does not exist" >&2; return 1; }
+
+    cronotrigger_load_job "$path" >/dev/null 2>&1 || { echo "cronotrigger: job '$name' is corrupt" >&2; return 1; }
+
+    local enabled="disabled"
+    cronotrigger_is_enabled "$name" && enabled="enabled"
+
+    printf "name     %s\n" "$name"
+    printf "status   %s\n" "$enabled"
+    printf "every    %s\n" "$JOB_EVERY"
+    [[ -n "$JOB_TIME" ]] && printf "time     %s\n" "$JOB_TIME"
+    [[ -n "$JOB_ANCHOR" ]] && printf "anchor   %s\n" "$JOB_ANCHOR"
+    printf "command  %s\n" "$JOB_COMMAND"
 }
 
 cronotrigger_cmd_set_enabled() {
@@ -236,7 +272,7 @@ cronotrigger_cmd_set_enabled() {
     cronotrigger_is_enabled "$name" && previous=true
 
     if [[ "$desired" == false && "$previous" == false ]]; then
-        echo "$name is already $([[ "$desired" == true ]] && echo enabled || echo disabled)"
+        cronotrigger_status_line - "$name"
         return 0
     fi
 
@@ -266,11 +302,7 @@ cronotrigger_cmd_set_enabled() {
     unset -f cronotrigger_rollback_enabled
     [[ -z "$backup" ]] || rm -f -- "$backup"
 
-    if [[ "$previous" == "$desired" ]]; then
-        echo "$name is already enabled"
-        return 0
-    fi
-    echo "$([[ "$desired" == true ]] && echo Enabled || echo Disabled) $name"
+    cronotrigger_status_line "$([[ "$desired" == true ]] && echo + || echo -)" "$name"
 }
 
 cronotrigger_cmd_remove() {
@@ -308,7 +340,7 @@ cronotrigger_cmd_remove() {
     fi
     unset -f cronotrigger_rollback_remove
     rm -f -- "$backup"
-    echo "Removed $name"
+    cronotrigger_status_line x "$name"
 }
 
 cronotrigger_cmd_run() {
@@ -327,6 +359,7 @@ Usage:
   cronotrigger add|a <name> --every <schedule> [--time HH:MM] --command <command>
   cronotrigger edit|e <name>
   cronotrigger list|ls
+  cronotrigger get|g <name>
   cronotrigger enable <name>
   cronotrigger disable <name>
   cronotrigger run <name>
