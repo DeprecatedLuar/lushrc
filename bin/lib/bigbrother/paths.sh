@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 BIGBROTHER_UNIT_DIR="${BIGBROTHER_UNIT_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user}"
+BIGBROTHER_RUNTIME_DIR="${BIGBROTHER_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/bigbrother-${UID}}}"
+BIGBROTHER_DRAFT_DIR="$BIGBROTHER_RUNTIME_DIR/drafts"
 
 # Under systemd a service's stdout is a journald pipe, not a TTY, so programs
 # disable their own color. journald itself stores and replays ANSI bytes
@@ -22,10 +24,11 @@ bigbrother_require_systemd() {
 }
 
 bigbrother_init_paths() {
-    mkdir -p "$BIGBROTHER_UNIT_DIR" || {
-        echo "bigbrother: failed to create $BIGBROTHER_UNIT_DIR" >&2
+    mkdir -p "$BIGBROTHER_UNIT_DIR" "$BIGBROTHER_DRAFT_DIR" || {
+        echo "bigbrother: failed to create bigbrother directories" >&2
         return 1
     }
+    chmod 700 "$BIGBROTHER_RUNTIME_DIR" "$BIGBROTHER_DRAFT_DIR" 2>/dev/null || true
 }
 
 bigbrother_unit_path() {

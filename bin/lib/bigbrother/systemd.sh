@@ -81,7 +81,9 @@ bigbrother_restart() {
 }
 
 bigbrother_enable_now() {
-    systemctl --user enable --now "$1.service"
+    local output status=0
+    output=$(systemctl --user enable --now "$1.service" 2>&1) || status=$?
+    ((status == 0)) || { printf '%s\n' "$output" >&2; return $status; }
 }
 
 bigbrother_disable_now() {
@@ -98,10 +100,6 @@ bigbrother_logs() {
     if $follow; then args+=(-f); fi
 
     journalctl "${args[@]}"
-}
-
-bigbrother_edit() {
-    systemctl --user edit --full "$1.service"
 }
 
 # Extracts the command line from `systemctl show -p ExecStart --value`, whose

@@ -36,8 +36,9 @@ bigbrother_main() {
 
     case "$command" in
         ls|list)          (($# == 0)) || { echo "Usage: bigbrother ls" >&2; return 1; }; bigbrother_cmd_ls ;;
-        add)               bigbrother_cmd_add "$@" ;;
+        add|a)             bigbrother_cmd_add "$@" ;;
         rm|remove)         bigbrother_cmd_rm "$@" ;;
+        mv|rename)         bigbrother_cmd_mv "$@" ;;
         enable|up)         bigbrother_cmd_enable "$@" ;;
         disable|down)      bigbrother_cmd_disable "$@" ;;
         run)               bigbrother_cmd_run "$@" ;;
@@ -45,7 +46,7 @@ bigbrother_main() {
         restart)           bigbrother_cmd_restart "$@" ;;
         logs)              bigbrother_cmd_logs "$@" ;;
         watch|tail|attach) bigbrother_cmd_watch "$@" ;;
-        edit)              bigbrother_cmd_edit "$@" ;;
+        edit|e)            bigbrother_cmd_edit "$@" ;;
         help|-h|--help)    (($# == 0)) || { echo "Usage: bigbrother help" >&2; return 1; }; bigbrother_cmd_help ;;
         *)
             # Bare known service name drops into the live view: `bb mentoros-api_`.
