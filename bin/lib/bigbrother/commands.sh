@@ -298,7 +298,8 @@ bigbrother_cmd_add_verified() {
 
     bigbrother_run_transient "$name" "$workdir" "$@"
     if ! bigbrother_verify_launch "$name"; then
-        echo "bigbrother: '$name' did not survive its trial run — not saved" >&2
+        systemctl --user reset-failed "$name.service" 2>/dev/null || true
+        printf '~ %s\n' "$name" >&2
         return 1
     fi
 
@@ -372,7 +373,6 @@ bigbrother_cmd_enable() {
 
     if ! bigbrother_is_defined "$name"; then
         bigbrother_promote_transient "$name" || return 1
-        echo "bigbrother: promoted '$name' to a persisted service"
     fi
 
     bigbrother_enable_now "$name"
