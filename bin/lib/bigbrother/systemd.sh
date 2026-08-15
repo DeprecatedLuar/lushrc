@@ -87,7 +87,9 @@ bigbrother_enable_now() {
 }
 
 bigbrother_disable_now() {
-    systemctl --user disable --now "$1.service"
+    local output status=0
+    output=$(systemctl --user disable --now "$1.service" 2>&1) || status=$?
+    ((status == 0)) || { printf '%s\n' "$output" >&2; return $status; }
 }
 
 bigbrother_logs() {

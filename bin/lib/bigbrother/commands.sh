@@ -115,9 +115,9 @@ bigbrother_cmd_ls() {
     $found || { echo "No services."; return 0; }
 
     local n
-    for n in "${enabled_names[@]}"; do printf '%s\n' "$n"; done
-    for n in "${disabled_names[@]}"; do printf '%s%s%s\n' "$dim" "$n" "$reset"; done
-    for n in "${transient_names[@]}"; do printf '%s (transient)\n' "$n"; done
+    for n in "${transient_names[@]}"; do printf '~ %s (transient)\n' "$n"; done
+    for n in "${enabled_names[@]}"; do printf '+ %s\n' "$n"; done
+    for n in "${disabled_names[@]}"; do printf '%s- %s%s\n' "$dim" "$n" "$reset"; done
 }
 
 # Promotes an already-running transient unit to a persisted one. The
