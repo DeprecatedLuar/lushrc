@@ -94,9 +94,9 @@ lsh_list() {
             entry=${entries[$i]}
             IFS=$'\t' read -r name endpoint host port <<< "$entry"
             if [[ $status == unreachable ]]; then
-                printf '\033[2K%s%-16s %s%s\n' "$dim" "$name" "$endpoint" "$reset"
+                printf '\033[2K%s- %-16s %s%s\n' "$dim" "$name" "$endpoint" "$reset"
             else
-                printf '\033[2K%-16s %s\n' "$name" "$endpoint"
+                printf '\033[2K+ %-16s %s\n' "$name" "$endpoint"
             fi
         done
     done

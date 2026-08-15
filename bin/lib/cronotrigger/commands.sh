@@ -220,8 +220,8 @@ cronotrigger_cmd_list() {
     $found || { echo "No jobs."; return 0; }
 
     local n
-    for n in "${enabled_names[@]}"; do printf '%s\n' "$n"; done
-    for n in "${disabled_names[@]}"; do printf '%s%s%s\n' "$dim" "$n" "$reset"; done
+    for n in "${enabled_names[@]}"; do printf '+ %s\n' "$n"; done
+    for n in "${disabled_names[@]}"; do printf '%s- %s%s\n' "$dim" "$n" "$reset"; done
 }
 
 cronotrigger_cmd_set_enabled() {
