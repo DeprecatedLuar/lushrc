@@ -25,13 +25,6 @@ bigbrother_main() {
         *) bigbrother_require_systemd || exit 1 ;;
     esac
 
-    # Bare-path shortcut: `bb ./binary` or `bb /abs/binary` routes to `run`.
-    if [[ "$command" == */* ]] || { [[ -f "$command" ]] && [[ -x "$command" ]]; }; then
-        bigbrother_init_paths
-        bigbrother_cmd_run "$command" "$@"
-        return
-    fi
-
     bigbrother_init_paths
 
     case "$command" in
@@ -55,9 +48,10 @@ bigbrother_main() {
                 bigbrother_cmd_watch "$command" "$@"
                 return
             fi
-            echo "bigbrother: unknown command '$command'" >&2
-            bigbrother_cmd_help >&2
-            return 1
+            # Anything else is a command line, not a subcommand: `bb htop`,
+            # `bb ./script.sh --flag` — opens the add draft prefilled with
+            # it as ExecStart so you just pick a name and go.
+            bigbrother_cmd_add_command "$command" "$@"
             ;;
     esac
 }

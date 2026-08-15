@@ -240,6 +240,14 @@ bigbrother_cmd_add() {
         body=$(bigbrother_render_unit "$suggested" "$exec_flag" "${workdir_flag:-$PWD}")
     fi
 
+    bigbrother_finalize_add "$suggested" "$body" "$promote_from"
+}
+
+# Opens the editor draft, then writes + enables + starts the result.
+# Shared tail for `add` and the bare-command shortcut.
+bigbrother_finalize_add() {
+    local suggested="$1" body="$2" promote_from="${3:-}"
+
     bigbrother_edit_buffer add "$suggested" "$body" || return 1
     local name="$BB_RESULT_NAME"
 
@@ -256,6 +264,26 @@ bigbrother_cmd_add() {
     bigbrother_status_line + "$name"
 }
 
+# Entry point for the bare `bb <command> [args...]` shortcut — anything that
+# isn't a known subcommand or an existing service name is treated as a
+# command line, prefilled into the add draft as ExecStart so the user just
+# picks a name and goes.
+bigbrother_cmd_add_command() {
+    (($# > 0)) || { echo "Usage: bb <command> [args...]" >&2; return 1; }
+
+    bigbrother_ensure_linger
+
+    local exec_start="" suggested body arg
+    for arg in "$@"; do
+        exec_start+="${exec_start:+ }$(printf '%q' "$arg")"
+    done
+
+    suggested=$(basename -- "$1")
+    body=$(bigbrother_render_unit "$suggested" "$exec_start" "$PWD")
+
+    bigbrother_finalize_add "$suggested" "$body"
+}
+
 bigbrother_cmd_rm() {
     local name="${1:-}"
     [[ -z "$name" ]] && { echo "Usage: bigbrother rm <name>" >&2; return 1; }
@@ -269,14 +297,39 @@ bigbrother_cmd_rm() {
 
 bigbrother_cmd_enable() {
     local name="${1:-}"
-    [[ -z "$name" ]] && { echo "Usage: bigbrother enable <name>" >&2; return 1; }
+    [[ -z "$name" ]] && { echo "Usage: bigbrother enable <name|path>" >&2; return 1; }
     bigbrother_ensure_linger
 
+    if ! bigbrother_is_defined "$name" && ! bigbrother_is_transient "$name" 2>/dev/null; then
+        # Not a known service — a path here means define + enable + start
+        # directly, no editor, mirroring how `bb ./binary` context-routes
+        # to `run` instead of erroring as an unknown command.
+        if [[ "$name" == */* ]] || [[ -f "$name" ]]; then
+            local abs svc_name
+            abs=$(bigbrother_resolve_abs "$name") || {
+                echo "bigbrother: no such path '$name'" >&2
+                return 1
+            }
+            [[ -x "$abs" ]] || { echo "bigbrother: '$abs' is not executable" >&2; return 1; }
+            svc_name=$(bigbrother_name_from_path "$abs")
+
+            if bigbrother_is_defined "$svc_name"; then
+                echo "bigbrother: '$svc_name' already exists" >&2
+                return 1
+            fi
+
+            bigbrother_write_unit "$svc_name" "$abs" "$(dirname "$abs")" || return 1
+            bigbrother_daemon_reload
+            bigbrother_enable_now "$svc_name"
+            bigbrother_status_line + "$svc_name"
+            return 0
+        fi
+
+        echo "bigbrother: '$name' is not defined" >&2
+        return 1
+    fi
+
     if ! bigbrother_is_defined "$name"; then
-        bigbrother_is_transient "$name" 2>/dev/null || {
-            echo "bigbrother: '$name' is not defined" >&2
-            return 1
-        }
         bigbrother_promote_transient "$name" || return 1
         echo "bigbrother: promoted '$name' to a persisted service"
     fi
@@ -416,8 +469,8 @@ Usage: bigbrother [command]
        bb [command]
 
 Bare shortcuts:
-    bb ./binary            Run a binary now (transient, gone on reboot)
-    bb <name>              Watch a running service's live output
+    bb <command> [args...]  Opens the add draft prefilled with it as ExecStart
+    bb <name>               Watch a running service's live output
 
 Commands:
     ls, list                List all services (enabled plain, disabled dim, transient marked)
@@ -427,7 +480,7 @@ Commands:
                               (no path) drafts empty and lets you fill in the rest in $EDITOR
     rm, remove <name>        Stop, disable, and delete a service definition
     mv, rename <old> <new>   Rename a defined service, preserving its enabled/active state
-    enable, up <name>        Enable + start (persists across reboot)
+    enable, up <name|path>   Enable + start; a path defines it first, no editor
     disable, down <name>     Disable + stop (definition kept)
     run <path|name>          Run now — transient if a path, start if a defined name
     stop <name>               Stop now (stays defined)
