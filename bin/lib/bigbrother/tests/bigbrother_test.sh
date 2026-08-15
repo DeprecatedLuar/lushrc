@@ -176,6 +176,43 @@ assert_file_contains() {
     assert_equals "4" "$(wc -l < "$unit")" "no-description unit line count"
     assert_file_contains "$unit" "ExecStart=/bin/true"
 
+    # ls --user/--root/--all: stub what the scope listing depends on
+    bigbrother_running_names() {
+        [[ "$1" == user ]] && printf 'pipewire\nagentctl\n' || printf 'NetworkManager\n'
+    }
+    bigbrother_transient_names() { printf 'agentctl\n'; }
+
+    out=$(bigbrother_cmd_ls --user)
+    assert_contains "$out" "~ agentctl" "ls --user marks transient with ~"
+    assert_contains "$out" "+ pipewire" "ls --user marks non-transient with +"
+    if [[ "$out" == *"user"$'\n'* ]]; then
+        fail "ls --user printed a section header for a single scope: $out"
+    fi
+
+    out=$(bigbrother_cmd_ls --root)
+    assert_contains "$out" "+ NetworkManager" "ls --root lists system units"
+    if [[ "$out" == *"~"* ]]; then
+        fail "ls --root should never mark ~ (no transient probe at system scope): $out"
+    fi
+
+    out_all=$(bigbrother_cmd_ls --all)
+    assert_contains "$out_all" "user" "ls --all prints the user header"
+    assert_contains "$out_all" "system" "ls --all prints the system header"
+    assert_contains "$out_all" "+ NetworkManager" "ls --all includes system units"
+    assert_contains "$out_all" "~ agentctl" "ls --all includes user units"
+
+    out_union=$(bigbrother_cmd_ls --user --root)
+    assert_equals "$out_all" "$out_union" "ls --user --root equals ls --all"
+
+    if bigbrother_cmd_ls --bogus >/dev/null 2>&1; then
+        fail "ls accepted an unknown flag"
+    fi
+    ls_error=$(bigbrother_cmd_ls --bogus 2>&1 >/dev/null || true)
+    assert_contains "$ls_error" "--bogus" "ls error names the unknown flag"
+
+    # --system is a --root alias
+    assert_equals "$(bigbrother_cmd_ls --root)" "$(bigbrother_cmd_ls --system)" "--system aliases --root"
+
     echo "  layer 1 (pure) passed"
 )
 
@@ -292,6 +329,31 @@ fi
 if bb enable "./$TEST_PREFIX" >/dev/null 2>&1; then
     fail "enable accepted a bare path"
 fi
+
+
+# --- ls --root: read-only, unprivileged, shape not specific names (the
+# host's running system services will differ across machines)
+root_output=$(bb ls --root) || fail "ls --root failed"
+[[ -n "$root_output" ]] || fail "ls --root produced no output"
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^[+~]\  ]] || fail "ls --root line has an unexpected mark: $line"
+done <<< "$root_output"
+
+# --- ls --all: both scope headers present
+all_output=$(bb ls --all) || fail "ls --all failed"
+assert_contains "$all_output" "user" "ls --all real output has a user header"
+assert_contains "$all_output" "system" "ls --all real output has a system header"
+
+# --- ls with no flags is unaffected by the refactor: only bb-owned units,
+# never the machine's ambient services
+bb add "$TEST_PREFIX-lsguard" -c "$TEST_PREFIX" >/dev/null || fail "add for ls guard failed"
+plain_output=$(bb ls)
+assert_contains "$plain_output" "$TEST_PREFIX-lsguard" "plain ls still lists bb-owned services"
+if [[ "$plain_output" == *"NetworkManager"* ]]; then
+    fail "plain ls leaked ambient system services: $plain_output"
+fi
+bb rm "$TEST_PREFIX-lsguard" >/dev/null || fail "rm of ls guard service failed"
 
 echo "  layer 2 (systemd) passed"
 echo "bigbrother tests passed"

@@ -207,6 +207,18 @@ bigbrother_status_line() {
     printf '%s%s %s%s\n' "$style" "$mark" "$name" "$reset"
 }
 
+# Dim section header, TTY-only styling like bigbrother_status_line. Only
+# printed when a listing spans more than one scope — a header above a single
+# list is noise.
+bigbrother_section_header() {
+    local text="$1" style="" reset=""
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+        style=$'\033[2m'
+        reset=$'\033[0m'
+    fi
+    printf '%s%s%s\n' "$style" "$text" "$reset"
+}
+
 bigbrother_cmd_get() {
     local name="${1:-}"
     [[ -z "$name" ]] && { echo "Usage: bigbrother get <name>" >&2; return 1; }
@@ -235,7 +247,7 @@ bigbrother_cmd_get() {
     printf "unit     %s\n" "$(bigbrother_unit_path "$name")"
 }
 
-bigbrother_cmd_ls() {
+bigbrother_ls_owned() {
     local name found=false
     local -a enabled_names=() disabled_names=() transient_names=()
 
@@ -261,6 +273,67 @@ bigbrother_cmd_ls() {
     for n in "${transient_names[@]}"; do bigbrother_status_line '~' "$n"; done
     for n in "${enabled_names[@]}"; do bigbrother_status_line + "$n"; done
     for n in "${disabled_names[@]}"; do bigbrother_status_line - "$n"; done
+}
+
+# Lists every *running* unit in a scope, read-only — these are not bb-owned,
+# so only + (up) and, for user scope, ~ (transient) ever apply; a stopped unit
+# never appears here. System scope skips the transient probe entirely: it
+# would cost one extra `systemctl show` per unit to distinguish a state
+# bigbrother cannot act on anyway (see design doc on read-only /etc/systemd).
+bigbrother_ls_scope() {
+    local scope="$1" name found=false
+    local -A transient_set=()
+
+    if [[ "$scope" == user ]]; then
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            transient_set["$name"]=1
+        done < <(bigbrother_transient_names)
+    fi
+
+    while IFS= read -r name; do
+        [[ -z "$name" ]] && continue
+        found=true
+        if [[ -n "${transient_set[$name]:-}" ]]; then
+            bigbrother_status_line '~' "$name"
+        else
+            bigbrother_status_line + "$name"
+        fi
+    done < <(bigbrother_running_names "$scope")
+
+    $found || echo "No running $scope services."
+}
+
+bigbrother_cmd_ls() {
+    local arg show_user=false show_root=false
+
+    while (($#)); do
+        arg="$1"
+        case "$arg" in
+            --user)           show_user=true ;;
+            --root|--system)  show_root=true ;;
+            --all)            show_user=true; show_root=true ;;
+            *) echo "bigbrother: unknown flag '$arg'" >&2; return 1 ;;
+        esac
+        shift
+    done
+
+    if ! $show_user && ! $show_root; then
+        bigbrother_ls_owned
+        return
+    fi
+
+    local multi=false
+    $show_user && $show_root && multi=true
+
+    if $show_user; then
+        $multi && bigbrother_section_header "user"
+        bigbrother_ls_scope user
+    fi
+    if $show_root; then
+        $multi && bigbrother_section_header "system"
+        bigbrother_ls_scope system
+    fi
 }
 
 # Promotes an already-running transient unit to a persisted one, and is the
@@ -590,6 +663,9 @@ Markers:
 
 Commands:
     ls, list                List all services
+    ls, list --user          List every running systemd --user service (read-only, not just bb's)
+    ls, list --root          List every running system service (read-only; --system also works)
+    ls, list --all            Both, in sections. Never prompts for sudo: listing is unprivileged.
     get, g <name>            Show details (status, command, workdir, unit path) for one service
     run [-n <name>] <cmd> [args...]
                               Run now as a transient unit and confirm it survived. Names itself

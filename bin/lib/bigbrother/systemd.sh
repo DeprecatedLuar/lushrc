@@ -58,6 +58,15 @@ bigbrother_transient_names() {
         done
 }
 
+bigbrother_running_names() {
+    local scope="$1" flag
+    [[ "$scope" == user ]] && flag=--user || flag=--system
+    systemctl "$flag" list-units --type=service --state=running --no-legend --plain 2>/dev/null |
+        awk '{print $1}' | while IFS= read -r unit; do
+            printf '%s\n' "${unit%.service}"
+        done
+}
+
 bigbrother_run_transient() {
     local name="$1" workdir="$2"
     shift 2

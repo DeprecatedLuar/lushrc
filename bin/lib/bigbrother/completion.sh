@@ -25,7 +25,10 @@ _bigbrother() {
     # `run` and `add` take a command line, so past their flags there is nothing
     # service-shaped left to complete — hand those words to command completion.
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "-n -c --name --command --workdir" -- "$cur"))
+        case "${COMP_WORDS[1]}" in
+            ls|list) COMPREPLY=($(compgen -W "--user --root --system --all" -- "$cur")) ;;
+            *)       COMPREPLY=($(compgen -W "-n -c --name --command --workdir" -- "$cur")) ;;
+        esac
         return
     fi
 

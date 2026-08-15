@@ -28,7 +28,7 @@ bigbrother_main() {
     bigbrother_init_paths
 
     case "$command" in
-        ls|list)          (($# == 0)) || { echo "Usage: bigbrother ls" >&2; return 1; }; bigbrother_cmd_ls ;;
+        ls|list)          bigbrother_cmd_ls "$@" ;;
         get|g)             bigbrother_cmd_get "$@" ;;
         add|a)             bigbrother_cmd_add "$@" ;;
         rm|remove)         bigbrother_cmd_rm "$@" ;;
