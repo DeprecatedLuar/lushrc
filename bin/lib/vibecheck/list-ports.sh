@@ -1,11 +1,27 @@
 #!/usr/bin/env bash
 
+PROGRAM_NAME="vch"
+USAGE="Usage: $PROGRAM_NAME ports [--all] [--ip]"
+LIB_DIR="$(dirname "$0")"
+PORT_COLUMN=1
+PORT_COLUMN_WIDTH=5
+PORTS_COLUMN_COUNT=3
+
 show_addr=false
 want_all=false
 for arg in "$@"; do
     case "$arg" in
         --all|-a) want_all=true ;;
         --ip|-i) show_addr=true ;;
+        help|-h|--help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+        *)
+            printf "%s ports: unknown option '%s'\n" "$PROGRAM_NAME" "$arg" >&2
+            printf '%s\n' "$USAGE" >&2
+            exit 2
+            ;;
     esac
 done
 
@@ -53,27 +69,19 @@ END {
     }
 }' | sort -n -k1,1)
 
-# Two passes: resolve docker names + find the widest "(proc)" label, then
-# print aligned. Buffering is already required for docker-name resolution,
-# so alignment rides along at no extra cost.
-ports=() labels=() addrs=()
-max_label=0
+# Resolve Docker proxy names, then hand the rows to the shared formatter.
 while read -r port proc addr; do
+    [[ -n "$port" && -n "$proc" ]] || continue
     if [[ "$proc" == "docker-pr" ]]; then
         name=$(resolve_docker_name "$port")
         [[ -n "$name" ]] && proc="$name"
     fi
-    label="($proc)"
-    (( ${#label} > max_label )) && max_label=${#label}
-    ports+=("$port")
-    labels+=("$label")
-    addrs+=("$addr")
-done <<< "$rows"
-
-for i in "${!ports[@]}"; do
     if $show_addr; then
-        printf '%5s %-*s %s\n' "${ports[$i]}" "$max_label" "${labels[$i]}" "${addrs[$i]}"
+        printf '%s %s %s\n' "$port" "($proc)" "$addr"
     else
-        printf '%5s %s\n' "${ports[$i]}" "${labels[$i]}"
+        printf '%s %s\n' "$port" "($proc)"
     fi
-done
+done <<< "$rows" | "$LIB_DIR/format-columns.sh" \
+    --columns "$PORTS_COLUMN_COUNT" \
+    --right "$PORT_COLUMN" \
+    --min-width "$PORT_COLUMN:$PORT_COLUMN_WIDTH"

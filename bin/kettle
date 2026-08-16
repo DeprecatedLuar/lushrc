@@ -19,6 +19,11 @@ CUSTOM_PREFIX_DIR="$HOME/.local/share/kettle/prefixes"
 CUSTOM_WRAPPER_DIR="$HOME/.local/share/kettle/custom_wrappers"
 CUSTOM_GAME_DEPS=(jq steam-run umu-run)
 
+# Per-slug overrides (mangohud, offload) for custom games only — Steam-library
+# games run inside Steam's own pressure-vessel container and can't be reached
+# from a kettle wrapper; see kettle help
+SETTINGS_REGISTRY="$HOME/.local/share/kettle/settings.json"
+
 #--[Dependencies]--------------------------------------------------------------
 
 # Verify required binaries are on PATH; exit with one clear error if not
@@ -277,11 +282,60 @@ get_custom_game() {
     jq -r --arg k "$slug" '.[$k] | select(. != null) | "\(.executable)|\(.prefix)"' "$CUSTOM_REGISTRY"
 }
 
+#--[Settings Registry]-----------------------------------------------------------
+
+# Ensure the per-slug settings registry file exists
+init_settings_registry() {
+    mkdir -p "$(dirname "$SETTINGS_REGISTRY")"
+    [[ -f "$SETTINGS_REGISTRY" ]] || echo '{}' > "$SETTINGS_REGISTRY"
+}
+
+# Read a per-slug setting; echoes $default when unset
+get_setting() {
+    local slug="$1" key="$2" default="$3" value
+    init_settings_registry
+    value=$(jq -r --arg k "$slug" --arg key "$key" '.[$k][$key] // empty' "$SETTINGS_REGISTRY" 2>/dev/null)
+    [[ -n "$value" ]] && echo "$value" || echo "$default"
+}
+
+# Write a per-slug setting (atomic tmp-then-mv, mirrors add_custom_game)
+set_setting() {
+    local slug="$1" key="$2" value="$3"
+    init_settings_registry
+    if ! jq --arg k "$slug" --arg key "$key" --argjson v "$value" \
+        '.[$k] = ((.[$k] // {}) + {($key): $v})' \
+        "$SETTINGS_REGISTRY" > "$SETTINGS_REGISTRY.tmp"; then
+        echo "Error: failed to update registry $SETTINGS_REGISTRY" >&2
+        rm -f "$SETTINGS_REGISTRY.tmp"
+        exit 1
+    fi
+    mv "$SETTINGS_REGISTRY.tmp" "$SETTINGS_REGISTRY"
+}
+
+#--[Env Injection]---------------------------------------------------------------
+
+# Compose the launch-command prefix (nvidia-offload, mangohud) for a custom
+# game slug, based on per-slug settings.json overrides. A prefix is silently
+# omitted if its binary isn't on PATH, so wrappers regenerate portably on a
+# machine without a dGPU or without mangohud installed.
+kettle_exec_prefix() {
+    local slug="$1" prefix=""
+    if [[ "$(get_setting "$slug" offload 1)" == 1 ]] && command -v nvidia-offload >/dev/null 2>&1; then
+        prefix+="nvidia-offload "
+    fi
+    if [[ "$(get_setting "$slug" mangohud 0)" == 1 ]] && command -v mangohud >/dev/null 2>&1; then
+        prefix+="mangohud "
+    fi
+    echo "$prefix"
+}
+
 # Create a wrapper that launches an exe via umu-run under Proton, and symlink it
 create_custom_wrapper() {
     local slug="$1" exe="$2" prefix="$3"
     local wrapper_path="$CUSTOM_WRAPPER_DIR/$slug"
     local symlink_path="$SYMLINK_DIR/$slug"
+    local exec_prefix
+    exec_prefix=$(kettle_exec_prefix "$slug")
 
     mkdir -p "$CUSTOM_WRAPPER_DIR" "$SYMLINK_DIR" "$prefix"
 
@@ -294,8 +348,14 @@ if ! command -v steam-run >/dev/null 2>&1 || ! command -v umu-run >/dev/null 2>&
 fi
 export WINEPREFIX="$prefix"
 export GAMEID=umu-default
-export PROTONPATH="$PROTON_PATH"
-exec steam-run umu-run "$exe" "\$@"
+for _d in "$STEAM_ROOT/compatibilitytools.d"/UMU-Proton* "$STEAM_ROOT/compatibilitytools.d"/GE-Proton* "$STEAM_ROOT/steamapps/common"/Proton\ -\ Experimental "$STEAM_ROOT/steamapps/common"/Proton\ */; do
+    [[ -d "\$_d" ]] && { export PROTONPATH="\${_d%/}"; break; }
+done
+if [[ -z "\${PROTONPATH:-}" ]]; then
+    echo "Error: no Proton build found under $STEAM_ROOT" >&2
+    exit 1
+fi
+exec ${exec_prefix}steam-run umu-run "$exe" "\$@"
 EOF
     then
         echo "Warning: failed to write wrapper $wrapper_path" >&2
@@ -343,6 +403,32 @@ add_custom_game() {
     echo "Added: $title -> $slug"
 }
 
+#--[Status Line]-----------------------------------------------------------------
+
+# +=enabled, dim -=disabled. TTY-only styling; the mark itself always prints
+# so piped/logged output stays greppable (grep '^+').
+kettle_status_line() {
+    local mark="$1" name="$2" style="" reset=""
+    if [[ "$mark" == + ]]; then
+        printf '%s %s\n' "$mark" "$name"
+        return
+    fi
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+        reset=$'\033[0m'
+        style=$'\033[2m'
+    fi
+    printf '%s%s %s%s\n' "$style" "$mark" "$name" "$reset"
+}
+
+# Print effective offload/mangohud state for one custom game slug
+print_settings() {
+    local slug="$1" offload mangohud
+    offload=$(get_setting "$slug" offload 1)
+    mangohud=$(get_setting "$slug" mangohud 0)
+    kettle_status_line "$([[ "$offload" == 1 ]] && echo + || echo -)" "offload:$slug"
+    kettle_status_line "$([[ "$mangohud" == 1 ]] && echo + || echo -)" "mangohud:$slug"
+}
+
 #--[Subcommands]---------------------------------------------------------------
 
 case "${1:-}" in
@@ -353,12 +439,18 @@ kettle - Steam game launcher with auto-generated wrapper scripts
 Usage: kettle [command] [args]
 
 Commands:
-  (none)              Launch Steam
-  big, bigpicture     Launch Steam in Big Picture mode
-  ls, list            List available games (Steam + custom)
-  kill, stop <game>   Kill a running game by slug/initials
-  add [title] [exe]   Register a sideloaded (non-Steam) game
-  help, -h, --help    Show this help
+  (none)                      Launch Steam
+  big, bigpicture              Launch Steam in Big Picture mode
+  ls, list                     List available games (Steam + custom)
+  kill, stop <game>            Kill a running game by slug/initials
+  add [title] [exe]            Register a sideloaded (non-Steam) game
+  set <slug> <key> <on|off>    Set mangohud/offload for a custom game (custom
+                                games only — Steam-library games are launched
+                                inside Steam's own container and can't be
+                                reached this way; use Steam's per-game Launch
+                                Options instead, e.g. 'mangohud %command%')
+  status [slug]                Show mangohud/offload state for custom games
+  help, -h, --help             Show this help
 EOF
         ;;
     ls|list)
@@ -430,6 +522,46 @@ EOF
         exe="${exe/#\~/$HOME}"
         exe=$(realpath -m -- "$exe")
         add_custom_game "$title" "$exe"
+        ;;
+    set)
+        slug="${2:-}" key="${3:-}" value="${4:-}"
+        if [[ -z "$slug" || -z "$key" || -z "$value" ]]; then
+            echo "Usage: kettle set <slug> <mangohud|offload> <on|off>" >&2
+            exit 1
+        fi
+        if ! custom_entry=$(get_custom_game "$slug") || [[ -z "$custom_entry" ]]; then
+            echo "Error: '$slug' is not a registered custom game. Steam-library games can't be configured via kettle — set mangohud/GPU options through Steam's own Launch Options." >&2
+            exit 1
+        fi
+        case "$key" in
+            mangohud|offload) ;;
+            *) echo "Error: unknown setting '$key' (expected mangohud or offload)" >&2; exit 1 ;;
+        esac
+        case "$value" in
+            on) normalized=1 ;;
+            off) normalized=0 ;;
+            *) echo "Error: invalid value '$value' (expected on or off)" >&2; exit 1 ;;
+        esac
+        check_deps jq
+        set_setting "$slug" "$key" "$normalized"
+        exe="${custom_entry%%|*}"
+        custom_prefix="${custom_entry##*|}"
+        create_custom_wrapper "$slug" "$exe" "$custom_prefix"
+        kettle_status_line "$([[ "$normalized" == 1 ]] && echo + || echo -)" "$key:$slug"
+        ;;
+    status)
+        slug="${2:-}"
+        if [[ -n "$slug" ]]; then
+            if ! custom_entry=$(get_custom_game "$slug") || [[ -z "$custom_entry" ]]; then
+                echo "Error: '$slug' is not a registered custom game." >&2
+                exit 1
+            fi
+            print_settings "$slug"
+        else
+            while IFS='|' read -r s _title _exe; do
+                print_settings "$s"
+            done < <(list_custom_games)
+        fi
         ;;
     big|bigpicture)
         init_wrappers

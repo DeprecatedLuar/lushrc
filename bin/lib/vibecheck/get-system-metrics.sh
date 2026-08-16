@@ -1,5 +1,90 @@
 #!/usr/bin/env bash
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+COLUMN_FORMATTER="$SCRIPT_DIR/format-columns.sh"
+METRIC_HEADER_FORMATTER="$SCRIPT_DIR/format-metric-header.sh"
+CPU_USAGE_SAMPLER="$SCRIPT_DIR/sample-cpu-usage.sh"
+CPU_USAGE_FORMATTER="$SCRIPT_DIR/format-cpu-usage.sh"
+PROCESS_CPU_USAGE_FORMATTER="$SCRIPT_DIR/format-process-cpu-usage.sh"
+PROCESS_ROW_FORMATTER="$SCRIPT_DIR/format-process-rows.sh"
+PERCENT_SCALE=100
+ROUNDING_DIVISOR=2
+SECONDARY_LINE_COLUMN_COUNT=1
+SECONDARY_LINE_COLUMN=1
+FORMAT_SECONDARY_LINE=(
+    "$COLUMN_FORMATTER"
+    --columns "$SECONDARY_LINE_COLUMN_COUNT"
+    --dim "$SECONDARY_LINE_COLUMN"
+)
+
+format_metric_header() {
+    "$METRIC_HEADER_FORMATTER" "$@"
+}
+
+is_decimal() {
+    [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+read_nvidia_metrics() {
+    local raw_metrics parsed_metrics
+
+    if ! raw_metrics=$(nvidia-smi \
+        --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total \
+        --format=csv,noheader,nounits 2>/dev/null | head -1); then
+        return 1
+    fi
+    parsed_metrics=$(awk -F',' '{
+        for (field = 1; field <= 4; field++) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $field)
+        }
+        print $1, $2, $3, $4
+    }' <<< "$raw_metrics")
+    read -r nvidia_usage nvidia_temp nvidia_mem_used nvidia_mem_total \
+        <<< "$parsed_metrics"
+
+    is_decimal "$nvidia_usage" \
+        && is_decimal "$nvidia_temp" \
+        && is_decimal "$nvidia_mem_used" \
+        && is_decimal "$nvidia_mem_total"
+}
+
+read_amd_metrics() {
+    local raw_metrics
+
+    if ! raw_metrics=$(sensors 2>/dev/null | awk '
+        /^amdgpu-/,/^$/ {
+            if (/^edge:/ && temp == "") {
+                match($0, /\+([0-9.]+)/, value)
+                temp = value[1]
+            }
+            if (/^power1:/ && power == "") {
+                match($0, /([0-9.]+) W/, current)
+                match($0, /cap = ([0-9.]+) W/, maximum)
+                power = current[1]
+                cap = maximum[1]
+            }
+        }
+        END { printf "%s\t%s\t%s\n", temp, power, cap }
+    '); then
+        return 1
+    fi
+    IFS=$'\t' read -r amd_temp amd_power amd_power_cap <<< "$raw_metrics"
+    is_decimal "$amd_temp"
+}
+
+format_amd_header() {
+    local label="$1"
+    local values=()
+
+    values+=(--suffix "${amd_temp%%.*}°" "C")
+    if is_decimal "$amd_power" && is_decimal "$amd_power_cap"; then
+        values+=(--pair "$amd_power" "/${amd_power_cap} W")
+    elif is_decimal "$amd_power"; then
+        values+=("${amd_power} W")
+    fi
+    format_metric_header "$label" "${values[@]}"
+}
+
 # Parse flags
 show_all=false
 metrics=()
@@ -14,7 +99,6 @@ done
 
 # Dependency check - warn about missing tools
 MISSING_DEPS=()
-command -v top &>/dev/null || MISSING_DEPS+=("top (install procps/procps-ng)")
 command -v free &>/dev/null || MISSING_DEPS+=("free (install procps/procps-ng)")
 command -v sensors &>/dev/null || MISSING_DEPS+=("sensors (install lm-sensors)")
 command -v lspci &>/dev/null || MISSING_DEPS+=("lspci (install pciutils)")
@@ -28,75 +112,119 @@ fi
 for metric in "${metrics[@]}"; do
     case "$metric" in
         cpu)
-            usage=$(LC_ALL=C top -bn2 -d1 | awk '
-                /^%Cpu/ {cpu=$2}
-                /^CPU:/ {gsub(/%/,"",$2); cpu=$2}
-                END {if(cpu) printf "%.0f", cpu}
-            ')
+            if ! cpu_usage_output=$("$CPU_USAGE_SAMPLER"); then
+                exit 1
+            fi
+            mapfile -t cpu_usage_lines <<< "$cpu_usage_output"
+            read -r record busy_delta total_delta <<< "${cpu_usage_lines[0]}"
+            [[ "$record" == "total" ]] || {
+                printf 'Invalid CPU sample: missing total record\n' >&2
+                exit 1
+            }
+            usage=$(((busy_delta * PERCENT_SCALE + total_delta / ROUNDING_DIVISOR) / total_delta))
             temp=$(sensors 2>/dev/null | grep -E '^(Package id 0|Tctl|Core 0|temp1):' | head -1 | awk '{match($0, /\+([0-9.]+)/, a); print a[1]}')
             cur_freq=$(awk '{sum+=$1; count++} END {if(count>0) printf "%.1f", sum/count/1000000}' /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null)
             max_freq=$(awk '{print $1/1000000; exit}' /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
-            freq_str=""
-            [[ -n "$cur_freq" && -n "$max_freq" ]] && freq_str=" @ ${cur_freq}/${max_freq}GHz"
+            cpu_header_values=("${usage}%")
+            if [[ -n "$temp" ]]; then
+                cpu_header_values+=(--suffix "${temp%%.*}°" "C")
+            fi
+            if [[ -n "$cur_freq" && -n "$max_freq" ]]; then
+                cpu_header_values+=(--pair "$cur_freq" "/${max_freq} GHz")
+            fi
             if [[ ${#metrics[@]} -eq 1 ]]; then
                 # Detailed output
-                if [[ -n "$usage" ]]; then
-                    [[ -n "$temp" ]] && printf "CPU %s%% (%s°C)%s\n" "$usage" "${temp%%.*}" "$freq_str" || printf "CPU %s%%%s\n" "$usage" "$freq_str"
-                fi
-                sensors 2>/dev/null | awk '/^Core [0-9]+:/ {gsub(/\+|°C/,""); printf "%s %s°C\n", $1$2, $3}'
+                format_metric_header CPU "${cpu_header_values[@]}" || exit 1
                 echo ""
-                ps aux --sort=-%cpu | awk 'NR>1 && $3>3 {
-                    cmd=$11; gsub(/^.*\//, "", cmd)
-                    printf "%.0f%% %s (%s)\n", $3, cmd, $2
-                }'
-            else
-                if [[ -n "$usage" ]]; then
-                    [[ -n "$temp" ]] && printf "CPU %s%% (%s°C)%s\n" "$usage" "${temp%%.*}" "$freq_str" || printf "CPU %s%%%s\n" "$usage" "$freq_str"
+                if ! "$CPU_USAGE_FORMATTER" <<< "$cpu_usage_output"; then
+                    exit 1
                 fi
+                echo ""
+                if ! "$PROCESS_CPU_USAGE_FORMATTER" <<< "$cpu_usage_output"; then
+                    exit 1
+                fi
+            else
+                printf 'CPU %s%%' "$usage"
+                [[ -n "$temp" ]] && printf ' (%s°C)' "${temp%%.*}"
+                if [[ -n "$cur_freq" && -n "$max_freq" ]]; then
+                    printf ' @ %s/%sGHz' "$cur_freq" "$max_freq"
+                fi
+                printf '\n'
             fi
             ;;
         ram)
-            if [[ ${#metrics[@]} -eq 1 ]]; then
-                LC_ALL=C free -b | awk '/^Mem:/ {
-                    bytes_per_gib = 1024 * 1024 * 1024
-                    percent = 100
-                    total = $2
-                    free = $4
-                    cache = $6
-                    available = $7
-                    used = total - free - cache
+            if ! ram_stats=$(LC_ALL=C free -b | awk '/^Mem:/ {
+                bytes_per_gib = 1024 * 1024 * 1024
+                percent = 100
+                total = $2
+                free = $4
+                cache = $6
+                available = $7
+                used = total - free - cache
 
-                    printf "RAM %.0f%% used (%.1fGi)\n", \
-                        used / total * percent, used / bytes_per_gib
-                    printf "  %.0f%% cache | %.0f%% free | %.1fGi available\n", \
-                        cache / total * percent, free / total * percent, available / bytes_per_gib
-                }' FS='[[:space:]]+'
+                printf "%.0f %.1f %.1f %.0f %.0f %.1f", \
+                    used / total * percent, \
+                    used / bytes_per_gib, \
+                    total / bytes_per_gib, \
+                    cache / total * percent, \
+                    free / total * percent, \
+                    available / bytes_per_gib
+            }' FS='[[:space:]]+'); then
+                printf 'Could not read RAM metrics\n' >&2
+                exit 1
+            fi
+            [[ -n "$ram_stats" ]] || {
+                printf 'Could not find RAM metrics\n' >&2
+                exit 1
+            }
+            read -r ram_usage ram_used_gib ram_total_gib \
+                ram_cache_percent ram_free_percent ram_available_gib <<< "$ram_stats"
+            if [[ ${#metrics[@]} -eq 1 ]]; then
+                format_metric_header RAM \
+                    "${ram_usage}%" \
+                    --pair "$ram_used_gib" "/${ram_total_gib} GiB" || exit 1
+                ram_detail_row=$(printf '%s%% cache · %s%% free · %s GiB available' \
+                    "$ram_cache_percent" "$ram_free_percent" "$ram_available_gib")
+                if ! printf '%s\n' "$ram_detail_row" | "${FORMAT_SECONDARY_LINE[@]}"; then
+                    printf 'Could not format RAM details\n' >&2
+                    exit 1
+                fi
                 echo ""
 
                 if [[ "$show_all" == true ]]; then
                     # Show all processes
-                    ps aux --sort=-%mem | awk 'NR>1 && $4>0 {
+                    ram_process_rows=$(ps aux --sort=-%mem | awk 'NR>1 && $4>0 {
                         cmd=$11; gsub(/^.*\//, "", cmd)
-                        printf "%.1f%% %s (%s)\n", $4, cmd, $2
-                    }'
+                        printf "%.1f%%\t%s\t(%s)\n", $4, cmd, $2
+                    }')
                 else
                     # Show processes >1%
-                    ps aux --sort=-%mem | awk 'NR>1 && $4>1 {
+                    ram_process_rows=$(ps aux --sort=-%mem | awk 'NR>1 && $4>1 {
                         cmd=$11; gsub(/^.*\//, "", cmd)
-                        printf "%.0f%% %s (%s)\n", $4, cmd, $2
-                    }'
+                        printf "%.0f%%\t%s\t(%s)\n", $4, cmd, $2
+                    }')
 
                     # Add background summary
-                    ps aux --no-headers | awk '$4<=1 && $4>0 {sum+=$4; count++} END {
-                        if(count>0) printf "\n%.0f%% background (%d processes)\n", sum, count
-                    }'
+                    ram_background_row=$(ps aux --no-headers | awk '
+                        $4 <= 1 && $4 > 0 {sum += $4; count++}
+                        END {
+                            if (count > 0) {
+                                printf "%.0f%%\tbackground\t(%d processes)", sum, count
+                            }
+                        }
+                    ')
+                    if [[ -n "$ram_background_row" ]]; then
+                        [[ -n "$ram_process_rows" ]] && ram_process_rows+=$'\n'
+                        ram_process_rows+="$ram_background_row"
+                    fi
+                fi
+                if [[ -n "$ram_process_rows" ]]; then
+                    if ! "$PROCESS_ROW_FORMATTER" <<< "$ram_process_rows"; then
+                        exit 1
+                    fi
                 fi
             else
-                LC_ALL=C free | awk '/^Mem:/ {
-                    percent = 100
-                    used = $2 - $4 - $6
-                    printf "RAM %.0f%%\n", used / $2 * percent
-                }'
+                printf 'RAM %s%%\n' "$ram_usage"
             fi
             ;;
         gpu)
@@ -111,19 +239,28 @@ for metric in "${metrics[@]}"; do
                 cur_freq=$(cat "$igpu_card/gt_cur_freq_mhz" 2>/dev/null)
                 max_freq=$(cat "$igpu_card/gt_max_freq_mhz" 2>/dev/null)
                 if [[ -n "$cur_freq" && -n "$max_freq" && "$max_freq" -gt 0 ]]; then
-                    pct=$((cur_freq * 100 / max_freq))
                     if [[ ${#metrics[@]} -eq 1 ]]; then
-                        printf "iGPU %s%% (%s°C) @ %s/%sMHz\n" "$pct" "${pkg_temp%%.*}" "$cur_freq" "$max_freq"
+                        igpu_header_values=()
+                        [[ -n "$pkg_temp" ]] \
+                            && igpu_header_values+=(--suffix "${pkg_temp%%.*}°" "C")
+                        igpu_header_values+=(--pair "$cur_freq" "/${max_freq} MHz")
+                        format_metric_header iGPU "${igpu_header_values[@]}" || exit 1
                         echo ""
                         # List processes using iGPU via render nodes
                         if command -v lsof &>/dev/null; then
                             lsof /dev/dri/render* 2>/dev/null | awk 'NR>1 {if(!seen[$1,$2]++) pids[$1]=pids[$1] (pids[$1]?", ":"") $2} END {for(name in pids) print name, "(" pids[name] ")"}'
                         fi
                     else
-                        [[ -n "$pkg_temp" ]] && printf "iGPU %s%% (%s°C)\n" "$pct" "${pkg_temp%%.*}" || printf "iGPU %s%%\n" "$pct"
+                        printf 'iGPU %s/%sMHz' "$cur_freq" "$max_freq"
+                        [[ -n "$pkg_temp" ]] && printf ' (%s°C)' "${pkg_temp%%.*}"
+                        printf '\n'
                     fi
                 elif [[ -n "$discrete_addr" ]]; then
-                    printf "iGPU\n"
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        format_metric_header iGPU detected || exit 1
+                    else
+                        printf 'iGPU detected\n'
+                    fi
                 fi
             fi
 
@@ -131,42 +268,94 @@ for metric in "${metrics[@]}"; do
             if [[ -n "$discrete_addr" ]]; then
                 power_state=$(cat "/sys/bus/pci/devices/$discrete_addr/power/runtime_status" 2>/dev/null)
                 if [[ "$power_state" == "suspended" ]]; then
-                    printf "dGPU [suspended]\n"
-                elif command -v nvidia-smi &>/dev/null; then
-                    usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
-                    nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
                     if [[ ${#metrics[@]} -eq 1 ]]; then
-                        mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
-                        mem_used=$(echo "$mem" | cut -d',' -f1 | xargs)
-                        mem_total=$(echo "$mem" | cut -d',' -f2 | xargs)
-                        [[ -n "$usage" && -n "$nv_temp" ]] && printf "dGPU %s%% (%s°C) | %sMB/%sMB\n" "$usage" "${nv_temp%%.*}" "$mem_used" "$mem_total"
-                        echo ""
-                        nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
-                            [[ -n "$line" ]] && echo "$line"
-                        done
+                        format_metric_header dGPU suspended || exit 1
                     else
-                        [[ -n "$usage" && -n "$nv_temp" ]] && printf "dGPU %s%% (%s°C)\n" "$usage" "${nv_temp%%.*}"
+                        printf 'dGPU suspended\n'
+                    fi
+                elif command -v nvidia-smi &>/dev/null; then
+                    if read_nvidia_metrics; then
+                        if [[ ${#metrics[@]} -eq 1 ]]; then
+                            format_metric_header dGPU \
+                                "${nvidia_usage}%" \
+                                --suffix "${nvidia_temp%%.*}°" "C" \
+                                --pair "$nvidia_mem_used" "/${nvidia_mem_total} MiB" || exit 1
+                            echo ""
+                            nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
+                                [[ -n "$line" ]] && echo "$line"
+                            done
+                        else
+                            printf 'dGPU %s%% (%s°C)\n' \
+                                "$nvidia_usage" "${nvidia_temp%%.*}"
+                        fi
+                    else
+                        if [[ ${#metrics[@]} -eq 1 ]]; then
+                            format_metric_header dGPU unavailable || exit 1
+                        else
+                            printf 'dGPU unavailable\n'
+                        fi
                     fi
                 elif sensors 2>/dev/null | grep -q '^amdgpu-'; then
-                    # AMD GPU via sensors
-                    amd_temp=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^edge:/) {match($0, /\+([0-9.]+)/, t); print t[1]; exit}}')
-                    amd_usage=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^power1:/) {match($0, /([0-9.]+) W/, p); match($0, /cap = ([0-9.]+) W/, c); if(c[1]>0) print int(p[1]/c[1]*100); exit}}')
-                    if [[ ${#metrics[@]} -eq 1 ]]; then
-                        [[ -n "$amd_temp" ]] && printf "dGPU %s°C\n" "${amd_temp%%.*}" || printf "dGPU\n"
+                    if read_amd_metrics; then
+                        if [[ ${#metrics[@]} -eq 1 ]]; then
+                            format_amd_header dGPU || exit 1
+                        else
+                            printf 'dGPU %s°C\n' "${amd_temp%%.*}"
+                        fi
                     else
-                        [[ -n "$amd_temp" && -n "$amd_usage" ]] && printf "dGPU %s%% (%s°C)\n" "$amd_usage" "${amd_temp%%.*}" || [[ -n "$amd_temp" ]] && printf "dGPU (%s°C)\n" "${amd_temp%%.*}"
+                        if [[ ${#metrics[@]} -eq 1 ]]; then
+                            format_metric_header dGPU unavailable || exit 1
+                        else
+                            printf 'dGPU unavailable\n'
+                        fi
+                    fi
+                else
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        format_metric_header dGPU unavailable || exit 1
+                    else
+                        printf 'dGPU unavailable\n'
                     fi
                 fi
             elif command -v nvidia-smi &>/dev/null; then
                 # Single NVIDIA GPU (no hybrid)
-                usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
-                nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
-                [[ -n "$usage" && -n "$nv_temp" ]] && printf "GPU %s%% (%s°C)\n" "$usage" "${nv_temp%%.*}"
+                if read_nvidia_metrics; then
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        format_metric_header GPU \
+                            "${nvidia_usage}%" \
+                            --suffix "${nvidia_temp%%.*}°" "C" \
+                            --pair "$nvidia_mem_used" "/${nvidia_mem_total} MiB" || exit 1
+                    else
+                        printf 'GPU %s%% (%s°C)\n' \
+                            "$nvidia_usage" "${nvidia_temp%%.*}"
+                    fi
+                else
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        format_metric_header GPU unavailable || exit 1
+                    else
+                        printf 'GPU unavailable\n'
+                    fi
+                fi
             elif sensors 2>/dev/null | grep -q '^amdgpu-'; then
                 # Single AMD GPU (no hybrid)
-                amd_temp=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^edge:/) {match($0, /\+([0-9.]+)/, t); print t[1]; exit}}')
-                amd_usage=$(sensors 2>/dev/null | awk '/^amdgpu-/,/^$/ {if(/^power1:/) {match($0, /([0-9.]+) W/, p); match($0, /cap = ([0-9.]+) W/, c); if(c[1]>0) print int(p[1]/c[1]*100); exit}}')
-                [[ -n "$amd_temp" && -n "$amd_usage" ]] && printf "GPU %s%% (%s°C)\n" "$amd_usage" "${amd_temp%%.*}" || [[ -n "$amd_temp" ]] && printf "GPU (%s°C)\n" "${amd_temp%%.*}"
+                if read_amd_metrics; then
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        format_amd_header GPU || exit 1
+                    else
+                        printf 'GPU %s°C\n' "${amd_temp%%.*}"
+                    fi
+                else
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        format_metric_header GPU unavailable || exit 1
+                    else
+                        printf 'GPU unavailable\n'
+                    fi
+                fi
+            else
+                if [[ ${#metrics[@]} -eq 1 ]]; then
+                    format_metric_header GPU "not detected" || exit 1
+                else
+                    printf 'GPU not detected\n'
+                fi
             fi
             ;;
         igpu)
@@ -178,18 +367,21 @@ for metric in "${metrics[@]}"; do
                 cur_freq=$(cat "$igpu_card/gt_cur_freq_mhz" 2>/dev/null)
                 max_freq=$(cat "$igpu_card/gt_max_freq_mhz" 2>/dev/null)
                 if [[ -n "$cur_freq" && -n "$max_freq" && "$max_freq" -gt 0 ]]; then
-                    pct=$((cur_freq * 100 / max_freq))
-                    printf "iGPU %s%% (%s°C) @ %s/%sMHz\n" "$pct" "${pkg_temp%%.*}" "$cur_freq" "$max_freq"
+                    igpu_header_values=()
+                    [[ -n "$pkg_temp" ]] \
+                        && igpu_header_values+=(--suffix "${pkg_temp%%.*}°" "C")
+                    igpu_header_values+=(--pair "$cur_freq" "/${max_freq} MHz")
+                    format_metric_header iGPU "${igpu_header_values[@]}" || exit 1
                     echo ""
                     # List processes using iGPU via render nodes
                     if command -v lsof &>/dev/null; then
                         lsof /dev/dri/render* 2>/dev/null | awk 'NR>1 {if(!seen[$1,$2]++) pids[$1]=pids[$1] (pids[$1]?", ":"") $2} END {for(name in pids) print name, "(" pids[name] ")"}'
                     fi
                 else
-                    printf "iGPU\n"
+                    format_metric_header iGPU detected || exit 1
                 fi
             else
-                echo "No iGPU detected"
+                format_metric_header iGPU "not detected" || exit 1
             fi
             ;;
         dgpu)
@@ -198,56 +390,74 @@ for metric in "${metrics[@]}"; do
             if [[ -n "$discrete_addr" ]]; then
                 power_state=$(cat "/sys/bus/pci/devices/$discrete_addr/power/runtime_status" 2>/dev/null)
                 if [[ "$power_state" == "suspended" ]]; then
-                    printf "dGPU [suspended]\n"
+                    format_metric_header dGPU suspended || exit 1
                 elif command -v nvidia-smi &>/dev/null; then
-                    usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
-                    nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
-                    mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
-                    mem_used=$(echo "$mem" | cut -d',' -f1 | xargs)
-                    mem_total=$(echo "$mem" | cut -d',' -f2 | xargs)
-                    [[ -n "$usage" && -n "$nv_temp" ]] && printf "dGPU %s%% (%s°C) | %sMB/%sMB\n" "$usage" "${nv_temp%%.*}" "$mem_used" "$mem_total"
-                    echo ""
-                    nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
-                        [[ -n "$line" ]] && echo "$line"
-                    done
+                    if read_nvidia_metrics; then
+                        format_metric_header dGPU \
+                            "${nvidia_usage}%" \
+                            --suffix "${nvidia_temp%%.*}°" "C" \
+                            --pair "$nvidia_mem_used" "/${nvidia_mem_total} MiB" || exit 1
+                        echo ""
+                        nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
+                            [[ -n "$line" ]] && echo "$line"
+                        done
+                    else
+                        format_metric_header dGPU unavailable || exit 1
+                    fi
+                elif sensors 2>/dev/null | grep -q '^amdgpu-'; then
+                    if read_amd_metrics; then
+                        format_amd_header dGPU || exit 1
+                    else
+                        format_metric_header dGPU unavailable || exit 1
+                    fi
+                else
+                    format_metric_header dGPU unavailable || exit 1
                 fi
             elif command -v nvidia-smi &>/dev/null; then
                 # Single NVIDIA GPU (no hybrid)
-                usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | xargs)
-                nv_temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)
-                mem=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
-                mem_used=$(echo "$mem" | cut -d',' -f1 | xargs)
-                mem_total=$(echo "$mem" | cut -d',' -f2 | xargs)
-                if [[ -n "$usage" && -n "$nv_temp" ]]; then
-                    printf "GPU %s%% (%s°C) | %sMB/%sMB\n" "$usage" "${nv_temp%%.*}" "$mem_used" "$mem_total"
+                if read_nvidia_metrics; then
+                    format_metric_header GPU \
+                        "${nvidia_usage}%" \
+                        --suffix "${nvidia_temp%%.*}°" "C" \
+                        --pair "$nvidia_mem_used" "/${nvidia_mem_total} MiB" || exit 1
                     echo ""
                     nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
                         [[ -n "$line" ]] && echo "$line"
                     done
+                else
+                    format_metric_header GPU unavailable || exit 1
                 fi
             else
-                echo "No dGPU detected"
+                format_metric_header dGPU "not detected" || exit 1
             fi
             ;;
         fan|fans)
+            fan_stats=$(sensors 2>/dev/null | awk '/^fan[0-9]+:/ && /RPM/ {
+                name = $1
+                gsub(/:/, "", name)
+                match($0, /[[:space:]]+([0-9]+) RPM/, current)
+                match($0, /max = ([0-9]+) RPM/, maximum)
+                printf "%s\t%s\t%s\n", toupper(name), current[1], maximum[1]
+            }')
             if [[ ${#metrics[@]} -eq 1 ]]; then
-                # Detailed output
-                command -v sensors &>/dev/null && sensors | awk '/^fan[0-9]+:/ && /RPM/ {
-                    name = $1; gsub(/:/, "", name); toupper(name)
-                    match($0, /[[:space:]]+([0-9]+) RPM/, cur)
-                    match($0, /max = ([0-9]+) RPM/, mx)
-                    current = cur[1]; max = mx[1]
-                    if (max > 0) {
-                        pct = int(current * 100 / max)
-                        printf "%s %drpm (%d%% of %drpm)\n", toupper(name), current, pct, max
-                    } else {
-                        printf "%s %drpm\n", toupper(name), current
-                    }
-                }'
+                while IFS=$'\t' read -r fan_name fan_current fan_max; do
+                    [[ -n "$fan_name" && -n "$fan_current" ]] || continue
+                    if [[ "$fan_max" =~ ^[1-9][0-9]*$ ]]; then
+                        fan_percent=$((fan_current * PERCENT_SCALE / fan_max))
+                        format_metric_header "$fan_name" \
+                            "${fan_percent}%" \
+                            --pair "$fan_current" "/${fan_max} RPM" || exit 1
+                    else
+                        format_metric_header "$fan_name" "${fan_current} RPM" || exit 1
+                    fi
+                done <<< "$fan_stats"
             else
-                command -v sensors &>/dev/null && sensors | awk '/^fan[0-9]+:/ && /RPM/ {
-                    match($0, /[[:space:]]+([0-9]+) RPM/, a); sum+=a[1]; count++
-                } END {if(count>0) printf "FAN %.0frpm\n", sum/count}'
+                fan_average=$(awk -F'\t' '{sum += $2; count++} END {
+                    if (count > 0) printf "%.0f", sum / count
+                }' <<< "$fan_stats")
+                if [[ -n "$fan_average" ]]; then
+                    printf 'FAN %srpm\n' "$fan_average"
+                fi
             fi
             ;;
         bat)
@@ -255,18 +465,51 @@ for metric in "${metrics[@]}"; do
                 [[ "$(cat "$psu/type" 2>/dev/null)" == "Battery" ]] || continue
                 capacity=$(cat "$psu/capacity" 2>/dev/null)
                 status=$(cat "$psu/status" 2>/dev/null)
-                [[ -n "$capacity" ]] && printf "BAT %s%% (%s)\n" "$capacity" "$status"
+                if [[ -n "$capacity" ]]; then
+                    if [[ ${#metrics[@]} -eq 1 ]]; then
+                        battery_values=("${capacity}%")
+                        [[ -n "$status" ]] && battery_values+=("${status,,}")
+                        format_metric_header BAT "${battery_values[@]}" || exit 1
+                    else
+                        printf 'BAT %s%%' "$capacity"
+                        [[ -n "$status" ]] && printf ' (%s)' "$status"
+                        printf '\n'
+                    fi
+                fi
             done
             ;;
         disk|storage)
             if [[ ${#metrics[@]} -eq 1 ]]; then
-                df -h -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 {
-                    pct=$5; gsub(/%/,"",pct)
-                    printf "%s %s%% (%s / %s) on %s\n", pct>=90 ? "!!" : "DISK", pct, $3, $2, $6
-                }'
+                disk_stats=$(df -hP \
+                    -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs \
+                    2>/dev/null | awk 'NR > 1 {
+                        usage = $5
+                        gsub(/%/, "", usage)
+                        printf "%s\t%s\t%s\t%s\n", usage, $3, $2, $6
+                    }')
             else
-                df -h / 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); printf "DISK %s%%\n", $5}'
+                disk_stats=$(df -hP / 2>/dev/null | awk 'NR == 2 {
+                    usage = $5
+                    gsub(/%/, "", usage)
+                    printf "%s\t%s\t%s\t%s\n", usage, $3, $2, $6
+                }')
             fi
+            [[ -n "$disk_stats" ]] || {
+                printf 'Could not read disk metrics\n' >&2
+                exit 1
+            }
+            while IFS=$'\t' read -r disk_usage disk_used disk_total disk_mount; do
+                if [[ ${#metrics[@]} -eq 1 ]]; then
+                    disk_primary="${disk_usage}%"
+                    ((disk_usage >= 90)) && disk_primary+=" full"
+                    format_metric_header DISK \
+                        "$disk_primary" \
+                        --pair "$disk_used" "/$disk_total" \
+                        "$disk_mount" || exit 1
+                else
+                    printf 'DISK %s%%\n' "$disk_usage"
+                fi
+            done <<< "$disk_stats"
             ;;
     esac
 done

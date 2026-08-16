@@ -1,23 +1,37 @@
 #!/usr/bin/env bash
 
 LIB_DIR="$(dirname "$0")/lib/vibecheck"
+METRIC_COLUMN_COUNT=3
+METRIC_DETAIL_COLUMN=3
+FORMAT_METRICS=(
+    "$LIB_DIR/format-columns.sh"
+    --columns "$METRIC_COLUMN_COUNT"
+    --dim "$METRIC_DETAIL_COLUMN"
+)
 
 case "${1:-}" in
+    help|-h|--help)
+        "$LIB_DIR/show-help.sh"
+        ;;
     tray)
         "$LIB_DIR/list-tray-apps.sh"
         ;;
-    ports)
+    ports|--ports)
         shift
         "$LIB_DIR/list-ports.sh" "$@"
         ;;
-    port)
-        "$LIB_DIR/get-port-process.sh" "$2"
+    port|--port)
+        shift
+        "$LIB_DIR/get-port-process.sh" "$@"
         ;;
     :*)
         port="${1#:}"
         "$LIB_DIR/get-port-process.sh" "$port"
         ;;
-    cpu|ram|gpu|igpu|dgpu|fan|fans|bat|disk|storage)
+    cpu)
+        "$LIB_DIR/get-system-metrics.sh" "$@"
+        ;;
+    ram|gpu|igpu|dgpu|fan|fans|bat|disk|storage)
         "$LIB_DIR/get-system-metrics.sh" "$@"
         ;;
     ip)
@@ -44,7 +58,12 @@ case "${1:-}" in
         "$LIB_DIR/get-hardware-info.sh" "$@"
         ;;
     "")
-        "$LIB_DIR/get-system-metrics.sh" | "$LIB_DIR/align-metrics.sh"
+        "$LIB_DIR/get-system-metrics.sh" | "${FORMAT_METRICS[@]}"
+        ;;
+    -*)
+        printf "vch: unknown option '%s'\n" "$1" >&2
+        printf "Try 'vch --help' for usage.\n" >&2
+        exit 2
         ;;
     *)
         if [[ "$1" =~ ^[0-9]+$ ]]; then
