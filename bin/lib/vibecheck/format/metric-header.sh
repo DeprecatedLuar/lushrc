@@ -2,7 +2,7 @@
 
 PROGRAM_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-COLUMN_FORMATTER="$SCRIPT_DIR/format-columns.sh"
+COLUMN_FORMATTER="$SCRIPT_DIR/columns.sh"
 HEADER_SEPARATOR="·"
 PAIR_OPTION="--pair"
 SUFFIX_OPTION="--suffix"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-COLUMN_FORMATTER="$SCRIPT_DIR/format-columns.sh"
+COLUMN_FORMATTER="$SCRIPT_DIR/columns.sh"
 OUTPUT_COLUMN_COUNT=3
 PERCENT_COLUMN=1
 PROCESS_NAME_COLUMN=2

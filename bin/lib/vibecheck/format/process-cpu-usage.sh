@@ -2,7 +2,7 @@
 
 PROGRAM_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROCESS_ROW_FORMATTER="$SCRIPT_DIR/format-process-rows.sh"
+PROCESS_ROW_FORMATTER="$SCRIPT_DIR/process-rows.sh"
 OTHER_ACTIVITY_LABEL="other activity"
 EMPTY_ACTIVITY_LABEL="No measurable process activity"
 MAX_DISPLAYED_PROCESSES=8

@@ -2,7 +2,7 @@
 
 PROGRAM_NAME="vch"
 USAGE="Usage: $PROGRAM_NAME ports [--all] [--ip]"
-LIB_DIR="$(dirname "$0")"
+LIB_DIR="$(dirname "$0")/.."
 PORT_COLUMN=1
 PORT_COLUMN_WIDTH=5
 PORTS_COLUMN_COUNT=3
@@ -81,7 +81,7 @@ while read -r port proc addr; do
     else
         printf '%s %s\n' "$port" "($proc)"
     fi
-done <<< "$rows" | "$LIB_DIR/format-columns.sh" \
+done <<< "$rows" | "$LIB_DIR/format/columns.sh" \
     --columns "$PORTS_COLUMN_COUNT" \
     --right "$PORT_COLUMN" \
     --min-width "$PORT_COLUMN:$PORT_COLUMN_WIDTH"

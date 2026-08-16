@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-COLUMN_FORMATTER="$SCRIPT_DIR/format-columns.sh"
-METRIC_HEADER_FORMATTER="$SCRIPT_DIR/format-metric-header.sh"
-CPU_USAGE_SAMPLER="$SCRIPT_DIR/sample-cpu-usage.sh"
-DRM_GPU_USAGE_SAMPLER="$SCRIPT_DIR/sample-drm-gpu-usage.sh"
-NVIDIA_PROCESS_USAGE_SAMPLER="$SCRIPT_DIR/sample-nvidia-process-usage.sh"
-CPU_USAGE_FORMATTER="$SCRIPT_DIR/format-cpu-usage.sh"
-PROCESS_CPU_USAGE_FORMATTER="$SCRIPT_DIR/format-process-cpu-usage.sh"
-PROCESS_GPU_USAGE_FORMATTER="$SCRIPT_DIR/format-process-gpu-usage.sh"
-PROCESS_ROW_FORMATTER="$SCRIPT_DIR/format-process-rows.sh"
+COLUMN_FORMATTER="$SCRIPT_DIR/format/columns.sh"
+METRIC_HEADER_FORMATTER="$SCRIPT_DIR/format/metric-header.sh"
+CPU_USAGE_SAMPLER="$SCRIPT_DIR/sample/cpu-usage.sh"
+DRM_GPU_USAGE_SAMPLER="$SCRIPT_DIR/sample/drm-gpu-usage.sh"
+NVIDIA_PROCESS_USAGE_SAMPLER="$SCRIPT_DIR/sample/nvidia-process-usage.sh"
+CPU_USAGE_FORMATTER="$SCRIPT_DIR/format/cpu-usage.sh"
+PROCESS_CPU_USAGE_FORMATTER="$SCRIPT_DIR/format/process-cpu-usage.sh"
+PROCESS_GPU_USAGE_FORMATTER="$SCRIPT_DIR/format/process-gpu-usage.sh"
+PROCESS_ROW_FORMATTER="$SCRIPT_DIR/format/process-rows.sh"
 NVIDIA_GPU_INDEX=0
 PERCENT_SCALE=100
 ROUNDING_DIVISOR=2

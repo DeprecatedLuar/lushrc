@@ -3,7 +3,7 @@
 if [[ "$1" == "-p" ]]; then
     pid="$2"
     if [[ -z "$pid" ]]; then
-        echo "Usage: find-process.sh -p <pid>"
+        echo "Usage: find.sh -p <pid>"
         exit 1
     fi
 
@@ -23,7 +23,7 @@ if [[ "$1" == "-p" ]]; then
 else
     name="$1"
     if [[ -z "$name" ]]; then
-        echo "Usage: find-process.sh <process_name>"
+        echo "Usage: find.sh <process_name>"
         exit 1
     fi
 
@@ -34,8 +34,8 @@ else
     if [[ -z "$pids" ]]; then
         pids=$(pgrep -f "$name" | while read -r pid; do
             cmd=$(ps -p "$pid" -o args= 2>/dev/null)
-            # Filter out vch/find-process.sh/pgrep search commands
-            if [[ ! "$cmd" =~ (vch|find-process\.sh|pgrep).*"$name" ]]; then
+            # Filter out vch/find.sh/pgrep search commands
+            if [[ ! "$cmd" =~ (vch|find\.sh|pgrep).*"$name" ]]; then
                 echo "$pid"
             fi
         done)
