@@ -4,9 +4,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 COLUMN_FORMATTER="$SCRIPT_DIR/format-columns.sh"
 METRIC_HEADER_FORMATTER="$SCRIPT_DIR/format-metric-header.sh"
 CPU_USAGE_SAMPLER="$SCRIPT_DIR/sample-cpu-usage.sh"
+DRM_GPU_USAGE_SAMPLER="$SCRIPT_DIR/sample-drm-gpu-usage.sh"
+NVIDIA_PROCESS_USAGE_SAMPLER="$SCRIPT_DIR/sample-nvidia-process-usage.sh"
 CPU_USAGE_FORMATTER="$SCRIPT_DIR/format-cpu-usage.sh"
 PROCESS_CPU_USAGE_FORMATTER="$SCRIPT_DIR/format-process-cpu-usage.sh"
+PROCESS_GPU_USAGE_FORMATTER="$SCRIPT_DIR/format-process-gpu-usage.sh"
 PROCESS_ROW_FORMATTER="$SCRIPT_DIR/format-process-rows.sh"
+NVIDIA_GPU_INDEX=0
 PERCENT_SCALE=100
 ROUNDING_DIVISOR=2
 SECONDARY_LINE_COLUMN_COUNT=1
@@ -21,8 +25,72 @@ format_metric_header() {
     "$METRIC_HEADER_FORMATTER" "$@"
 }
 
+read_igpu_metrics() {
+    local driver_path device_path igpu_driver igpu_pci_address
+
+    igpu_card=$(for card in /sys/class/drm/card[0-9]; do
+        [[ -f "$card/gt_cur_freq_mhz" ]] && printf '%s\n' "$card" && break
+    done)
+    [[ -n "$igpu_card" ]] || return 1
+
+    cur_freq=$(cat "$igpu_card/gt_cur_freq_mhz" 2>/dev/null)
+    max_freq=$(cat "$igpu_card/gt_max_freq_mhz" 2>/dev/null)
+    driver_path=$(readlink -f "$igpu_card/device/driver" 2>/dev/null)
+    device_path=$(readlink -f "$igpu_card/device" 2>/dev/null)
+    igpu_driver="${driver_path##*/}"
+    igpu_pci_address="${device_path##*/}"
+    igpu_usage=""
+    igpu_usage_output=""
+
+    if [[ -n "$igpu_driver" && -n "$igpu_pci_address" ]]; then
+        igpu_usage_output=$(
+            "$DRM_GPU_USAGE_SAMPLER" "$igpu_driver" "$igpu_pci_address"
+        ) || return 1
+        while read -r record value remainder; do
+            [[ "$record" == "total" ]] || continue
+            [[ "$value" =~ ^[0-9]+$ && -z "$remainder" ]] || return 1
+            igpu_usage="$value"
+            break
+        done <<< "$igpu_usage_output"
+    fi
+}
+
+build_igpu_header_values() {
+    igpu_header_values=()
+    [[ -n "$igpu_usage" ]] && igpu_header_values+=("${igpu_usage}%")
+    [[ -n "$pkg_temp" ]] \
+        && igpu_header_values+=(--suffix "${pkg_temp%%.*}°" "C")
+    if [[ -n "$cur_freq" && -n "$max_freq" ]]; then
+        igpu_header_values+=(--pair "$cur_freq" "/${max_freq} MHz")
+    fi
+}
+
+format_igpu_processes() {
+    [[ -n "$igpu_usage_output" ]] || return 0
+    if ! "$PROCESS_GPU_USAGE_FORMATTER" <<< "$igpu_usage_output"; then
+        printf 'Could not format iGPU process rows\n' >&2
+        return 1
+    fi
+}
+
+format_nvidia_processes() {
+    local usage_output
+
+    usage_output=$("$NVIDIA_PROCESS_USAGE_SAMPLER" "$NVIDIA_GPU_INDEX") \
+        || return 1
+    [[ -n "$usage_output" ]] || return 0
+    if ! "$PROCESS_GPU_USAGE_FORMATTER" <<< "$usage_output"; then
+        printf 'Could not format NVIDIA process rows\n' >&2
+        return 1
+    fi
+}
+
 is_decimal() {
     [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+is_positive_decimal() {
+    is_decimal "$1" && [[ "$1" =~ [1-9] ]]
 }
 
 read_nvidia_metrics() {
@@ -233,26 +301,21 @@ for metric in "${metrics[@]}"; do
             discrete_addr=$(lspci -D 2>/dev/null | grep -iE 'vga|3d' | grep -v '0000:00:02' | awk '{print $1}' | head -1)
             pkg_temp=$(sensors 2>/dev/null | grep -E '^Package id 0:' | sed 's/^[^+]*+\([0-9.]*\).*/\1/')
 
-            # iGPU - use frequency as activity indicator
+            # iGPU utilization is sampled from per-client DRM engine busy time.
             if [[ -n "$has_igpu" ]]; then
-                igpu_card=$(for c in /sys/class/drm/card[0-9]; do [[ -f "$c/gt_cur_freq_mhz" ]] && echo "$c" && break; done)
-                cur_freq=$(cat "$igpu_card/gt_cur_freq_mhz" 2>/dev/null)
-                max_freq=$(cat "$igpu_card/gt_max_freq_mhz" 2>/dev/null)
+                read_igpu_metrics || exit 1
                 if [[ -n "$cur_freq" && -n "$max_freq" && "$max_freq" -gt 0 ]]; then
                     if [[ ${#metrics[@]} -eq 1 ]]; then
-                        igpu_header_values=()
-                        [[ -n "$pkg_temp" ]] \
-                            && igpu_header_values+=(--suffix "${pkg_temp%%.*}°" "C")
-                        igpu_header_values+=(--pair "$cur_freq" "/${max_freq} MHz")
+                        build_igpu_header_values
                         format_metric_header iGPU "${igpu_header_values[@]}" || exit 1
                         echo ""
-                        # List processes using iGPU via render nodes
-                        if command -v lsof &>/dev/null; then
-                            lsof /dev/dri/render* 2>/dev/null | awk 'NR>1 {if(!seen[$1,$2]++) pids[$1]=pids[$1] (pids[$1]?", ":"") $2} END {for(name in pids) print name, "(" pids[name] ")"}'
-                        fi
+                        format_igpu_processes || exit 1
+                        [[ -n "$discrete_addr" ]] && echo ""
                     else
-                        printf 'iGPU %s/%sMHz' "$cur_freq" "$max_freq"
+                        printf 'iGPU'
+                        [[ -n "$igpu_usage" ]] && printf ' %s%%' "$igpu_usage"
                         [[ -n "$pkg_temp" ]] && printf ' (%s°C)' "${pkg_temp%%.*}"
+                        printf ' @ %s/%sMHz' "$cur_freq" "$max_freq"
                         printf '\n'
                     fi
                 elif [[ -n "$discrete_addr" ]]; then
@@ -280,10 +343,10 @@ for metric in "${metrics[@]}"; do
                                 "${nvidia_usage}%" \
                                 --suffix "${nvidia_temp%%.*}°" "C" \
                                 --pair "$nvidia_mem_used" "/${nvidia_mem_total} MiB" || exit 1
-                            echo ""
-                            nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
-                                [[ -n "$line" ]] && echo "$line"
-                            done
+                            if is_positive_decimal "$nvidia_usage"; then
+                                echo ""
+                                format_nvidia_processes || exit 1
+                            fi
                         else
                             printf 'dGPU %s%% (%s°C)\n' \
                                 "$nvidia_usage" "${nvidia_temp%%.*}"
@@ -363,20 +426,12 @@ for metric in "${metrics[@]}"; do
             pkg_temp=$(sensors 2>/dev/null | grep -E '^Package id 0:' | sed 's/^[^+]*+\([0-9.]*\).*/\1/')
 
             if [[ -n "$has_igpu" ]]; then
-                igpu_card=$(for c in /sys/class/drm/card[0-9]; do [[ -f "$c/gt_cur_freq_mhz" ]] && echo "$c" && break; done)
-                cur_freq=$(cat "$igpu_card/gt_cur_freq_mhz" 2>/dev/null)
-                max_freq=$(cat "$igpu_card/gt_max_freq_mhz" 2>/dev/null)
+                read_igpu_metrics || exit 1
                 if [[ -n "$cur_freq" && -n "$max_freq" && "$max_freq" -gt 0 ]]; then
-                    igpu_header_values=()
-                    [[ -n "$pkg_temp" ]] \
-                        && igpu_header_values+=(--suffix "${pkg_temp%%.*}°" "C")
-                    igpu_header_values+=(--pair "$cur_freq" "/${max_freq} MHz")
+                    build_igpu_header_values
                     format_metric_header iGPU "${igpu_header_values[@]}" || exit 1
                     echo ""
-                    # List processes using iGPU via render nodes
-                    if command -v lsof &>/dev/null; then
-                        lsof /dev/dri/render* 2>/dev/null | awk 'NR>1 {if(!seen[$1,$2]++) pids[$1]=pids[$1] (pids[$1]?", ":"") $2} END {for(name in pids) print name, "(" pids[name] ")"}'
-                    fi
+                    format_igpu_processes || exit 1
                 else
                     format_metric_header iGPU detected || exit 1
                 fi
@@ -397,10 +452,10 @@ for metric in "${metrics[@]}"; do
                             "${nvidia_usage}%" \
                             --suffix "${nvidia_temp%%.*}°" "C" \
                             --pair "$nvidia_mem_used" "/${nvidia_mem_total} MiB" || exit 1
-                        echo ""
-                        nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
-                            [[ -n "$line" ]] && echo "$line"
-                        done
+                        if is_positive_decimal "$nvidia_usage"; then
+                            echo ""
+                            format_nvidia_processes || exit 1
+                        fi
                     else
                         format_metric_header dGPU unavailable || exit 1
                     fi
@@ -420,10 +475,10 @@ for metric in "${metrics[@]}"; do
                         "${nvidia_usage}%" \
                         --suffix "${nvidia_temp%%.*}°" "C" \
                         --pair "$nvidia_mem_used" "/${nvidia_mem_total} MiB" || exit 1
-                    echo ""
-                    nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv,noheader 2>/dev/null | while read -r line; do
-                        [[ -n "$line" ]] && echo "$line"
-                    done
+                    if is_positive_decimal "$nvidia_usage"; then
+                        echo ""
+                        format_nvidia_processes || exit 1
+                    fi
                 else
                     format_metric_header GPU unavailable || exit 1
                 fi
