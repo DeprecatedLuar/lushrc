@@ -1,32 +1,33 @@
 #!/usr/bin/env bash
 
 LIB_DIR="$(dirname "$0")/lib/vibecheck"
+CMD_DIR="$LIB_DIR/commands"
 METRIC_COLUMN_COUNT=3
 METRIC_DETAIL_COLUMN=3
 FORMAT_METRICS=(
-    "$LIB_DIR/format-columns.sh"
+    "$LIB_DIR/format/columns.sh"
     --columns "$METRIC_COLUMN_COUNT"
     --dim "$METRIC_DETAIL_COLUMN"
 )
 
 case "${1:-}" in
     help|-h|--help)
-        "$LIB_DIR/show-help.sh"
+        "$CMD_DIR/help.sh"
         ;;
     tray)
-        "$LIB_DIR/list-tray-apps.sh"
+        "$CMD_DIR/tray.sh"
         ;;
     ports|--ports)
         shift
-        "$LIB_DIR/list-ports.sh" "$@"
+        "$CMD_DIR/ports.sh" "$@"
         ;;
     port|--port)
         shift
-        "$LIB_DIR/get-port-process.sh" "$@"
+        "$CMD_DIR/port.sh" "$@"
         ;;
     :*)
         port="${1#:}"
-        "$LIB_DIR/get-port-process.sh" "$port"
+        "$CMD_DIR/port.sh" "$port"
         ;;
     cpu)
         "$LIB_DIR/get-system-metrics.sh" "$@"
@@ -35,27 +36,14 @@ case "${1:-}" in
         "$LIB_DIR/get-system-metrics.sh" "$@"
         ;;
     ip)
-        mapfile -t iface_ips < <(ip -4 addr show scope global | awk '
-            /^[0-9]+:/ { iface = $2; gsub(/:/, "", iface) }
-            /inet /    { ip = $2; gsub(/\/.*/, "", ip); if (ip != "") print iface " " ip }
-        ')
-        public_ip=$(curl -sf --max-time 3 https://ifconfig.me 2>/dev/null || echo "n/a")
-        maxlen=6  # length of "Public"
-        for entry in "${iface_ips[@]}"; do
-            iface="${entry%% *}"
-            (( ${#iface} > maxlen )) && maxlen=${#iface}
-        done
-        for entry in "${iface_ips[@]}"; do
-            printf "%-*s %s\n" "$maxlen" "${entry%% *}" "${entry##* }"
-        done
-        printf "%-*s %s\n" "$maxlen" "Public" "$public_ip"
+        "$CMD_DIR/ip.sh"
         ;;
     net|internet)
-        "$LIB_DIR/get-net-info.sh"
+        "$CMD_DIR/net.sh"
         ;;
     hw|hardware)
         shift
-        "$LIB_DIR/get-hardware-info.sh" "$@"
+        "$CMD_DIR/hardware.sh" "$@"
         ;;
     "")
         "$LIB_DIR/get-system-metrics.sh" | "${FORMAT_METRICS[@]}"
@@ -67,16 +55,16 @@ case "${1:-}" in
         ;;
     *)
         if [[ "$1" =~ ^[0-9]+$ ]]; then
-            output=$("$LIB_DIR/get-port-process.sh" "$1" 2>/dev/null)
+            output=$("$CMD_DIR/port.sh" "$1" 2>/dev/null)
             if [[ "$output" == "Literally nothing on :"* ]]; then
-                if ! "$LIB_DIR/find-process.sh" -p "$1" 2>/dev/null; then
+                if ! "$CMD_DIR/find.sh" -p "$1" 2>/dev/null; then
                     echo "I didn't find anything"
                 fi
             else
                 echo "$output"
             fi
         else
-            output=$("$LIB_DIR/find-process.sh" "$1" 2>/dev/null)
+            output=$("$CMD_DIR/find.sh" "$1" 2>/dev/null)
             if [[ -n "$output" ]]; then
                 echo "$output"
             else
