@@ -204,7 +204,34 @@ Whisper config (model, device, compute type) hardcoded at top of script.
 - **tx**: Navigation + file moving with undo (`/tmp/tx-undo-$USER/`)
 - **pw**: Path wrapper — `pw cat c/lushrc/bashrc` or inline `cat $(pw c/file)`
 - **pack/unpack**: Universal archive handling
-- **vibecheck**: Port scanning, process finding, hardware info, system metrics
+- **vibecheck**: Port scanning, process finding, hardware info, system metrics, disk usage
+
+### Disk reclaim providers (vibecheck)
+
+`vch disk` prints the filesystem header, the biggest consumers under `$HOME` (plus system roots),
+and a reclaimable total. `vch disk PATH` scopes the consumer list to a subtree, and a path-shaped
+bare argument (`vch .`, `vch w/lushrc`) is treated as a disk lookup — a bare word stays a process
+search, so `vch firefox` never changes meaning based on the current directory.
+
+`vch disk reclaim` advertises what it will run, confirms, then executes. **It never issues a delete
+of its own.** Every command it runs comes from a provider in `bin/lib/vibecheck/reclaim/`, and each
+provider is a black box answering three verbs:
+
+```
+detect   exit 0 if the owning tool exists on this machine
+size     print reclaimable BYTES, as computed by the owning tool itself
+plan     print  COMMAND \t CONSEQUENCE \t NEEDS_SUDO
+```
+
+**A provider may only exist when the owning tool accounts for its own reclaimable bytes and ships
+its own command to free them.** That rule is what keeps this machine-independent — there is no
+curated list of paths someone guessed were disposable, so there is nothing to rot. Locations that
+would require a guess (`~/.cache`, the trash) deliberately have **no** provider: they appear as
+sized rows in the consumers list and never as an action. Adding support for a new tool is one new
+file in `reclaim/` and no edit anywhere else — `sample/reclaim.sh` globs the directory.
+
+Both samplers cache to `/tmp/vch-disk-$USER` with a 24h expiry, and `disk reclaim` deletes that
+directory after running so the next `vch disk` cannot report freed space as still reclaimable.
 - **conf**: Quick access to config files
 - **lush**: Self-management (`update`, `status`, `version`, `root`, `install`, `rm`, `list`)
 - **gh-install** (`system/shared/gh-install.sh`): `gh_install <binary> <user/repo>` — lazy-installs GitHub-hosted binaries via the-satellite. Used by `tcpeek`, `netboop`, `dredge`, `dots`.
@@ -298,4 +325,6 @@ $SYSDIR/reload/reload.sh
 | `bin/lib/cronotrigger/main.sh` | `bin/cronotrigger` stub | Split-tool entrypoint (6 sourced modules) |
 | `bin/lib/yeet/main.sh`, `bin/lib/yoink/main.sh` | their stubs | Twin binaries sharing `bin/lib/yeetyoink/` |
 | `bin/lib/lsh/main.sh` | `bin/lsh`, `bin/ssh` stub/alias | Split-tool entrypoint; owns extensionless helpers (`mosh-client`, `ssh-askpass`, `latency`) |
+| `bin/lib/vibecheck/sample/reclaim.sh` | `vch disk`, `vch disk reclaim` | Provider contract + aggregation |
+| `bin/lib/vibecheck/reclaim/*.sh` | `sample/reclaim.sh` | One self-detecting provider per tool |
 | `bin/hotline` | tmux | Async command launcher |

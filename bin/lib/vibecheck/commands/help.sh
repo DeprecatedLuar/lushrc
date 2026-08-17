@@ -9,7 +9,12 @@ System metrics:
   gpu | igpu | dgpu       GPU usage and processes
   fan | fans              Fan speeds
   bat                     Battery status
-  disk | storage          Disk usage
+  disk | storage [PATH]   Disk usage and biggest consumers
+    --rescan              Re-walk instead of reusing the cached scan
+  disk reclaim [ID ...]   Free space using each tool's own garbage collector
+    --dry-run             Show what would run, then stop
+    -y, --yes             Skip the confirmation prompt
+  PATH                    A path-shaped argument is a disk lookup (vch .)
 
 Ports and processes:
   port, --port PORT       Show the process listening on PORT

@@ -32,8 +32,17 @@ case "${1:-}" in
     cpu)
         "$LIB_DIR/get-system-metrics.sh" "$@"
         ;;
-    ram|gpu|igpu|dgpu|fan|fans|bat|disk|storage)
+    ram|gpu|igpu|dgpu|fan|fans|bat)
         "$LIB_DIR/get-system-metrics.sh" "$@"
+        ;;
+    disk|storage)
+        shift
+        if [[ "${1:-}" == reclaim ]]; then
+            shift
+            "$CMD_DIR/disk-reclaim.sh" "$@"
+        else
+            "$CMD_DIR/disk.sh" "$@"
+        fi
         ;;
     ip)
         "$CMD_DIR/ip.sh"
@@ -52,6 +61,12 @@ case "${1:-}" in
         printf "vch: unknown option '%s'\n" "$1" >&2
         printf "Try 'vch --help' for usage.\n" >&2
         exit 2
+        ;;
+    .|..|~|*/*)
+        # Path-shaped arguments are a disk lookup. A bare word stays a process
+        # search even when a directory of that name exists, so `vch firefox`
+        # never changes meaning based on the current directory.
+        "$CMD_DIR/disk.sh" "$@"
         ;;
     *)
         if [[ "$1" =~ ^[0-9]+$ ]]; then
