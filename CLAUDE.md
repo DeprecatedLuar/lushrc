@@ -125,6 +125,7 @@ or go offline deliberately.
 
 **Nav Index Shorthand**:
 ```
+h/  → $HOME/         H/  → /home/
 w/  → $WORKSPACE/    t/  → $TOOLS/       c/  → $HOME/.config/
 b/|bin/ → $HOME/bin/     d/  → $HOME/Downloads/   l/ → $HOME/.local/
 sb/ → /usr/local/bin/   doc/ → $DOCUMENTS/    etc/ → /etc/
