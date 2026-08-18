@@ -144,6 +144,29 @@ dest=$("$SYSDIR/shared/nav-engine.sh" --log "$1")    # with debug output
 
 Remote bootstrapping: `yoink`/`yeet` pipe `nav-engine.sh` via stdin to SSH for remote path resolution.
 
+### Cross-shell directory recency (zz)
+
+`system/shared/z-history.sh` — `zz` jumps to the latest directory *any* shell moved to, so a
+freshly-opened terminal can land where the last one left off. Sourced (not run) from `source.sh`,
+since it has to `cd` the calling shell.
+
+`z -` is deliberately left alone: everywhere in Unix `-` means this shell's own previous directory
+(`cd -` is POSIX), and it is exact. `zz` is a different, fuzzier thing — last-writer-wins across N
+terminals — so it gets its own token rather than overloading a precise one. `z --` was never an
+option: zoxide already uses it for the POSIX end-of-options sense (`z -- <path>`).
+
+Recording is a `PROMPT_COMMAND` hook rather than a hook inside `z()`, so `cd`, `tx`, `pushd` and
+anything else that moves the shell are all captured by one path. Three rules make it work:
+
+- **`$HOME` is never recorded** — otherwise a newly-opened terminal's own first prompt overwrites
+  the target before you can jump to it, and the feature defeats itself.
+- **`zz` skips `$PWD`** — after you `cd`, your own shell is the last writer, so a single-value
+  store would make `zz` a no-op. Depth ≥ 2 is a requirement, not a nicety; history holds 10.
+- **Deleted directories are skipped at read time**, degrading to the next entry instead of failing.
+
+State lives in `/tmp/z-history-$USER` (same convention as `tx-undo-$USER`). `/tmp` is correct here:
+after a reboot there are no other terminals whose position would be worth restoring.
+
 ## Key Utilities
 
 ### Command Launcher (hotline)
@@ -320,6 +343,7 @@ $SYSDIR/reload/reload.sh
 | `bin/lib/yeetyoink/prompt.sh` | yoink, yeet | `confirm_block` transfer confirmation UI |
 | `system/shared/spinner.sh` | dock, yoink | Terminal progress indicator |
 | `system/shared/z-wrapper.sh` | `source.sh` (z function) | Enhanced zoxide wrapper |
+| `system/shared/z-history.sh` | `source.sh` (zz function) | Cross-shell directory recency |
 | `system/shared/gh-install.sh` | tcpeek, netboop, dredge, dots | Lazy GitHub binary installer |
 | `system/reload/reload.sh` | `reload` alias, `lush` | Orchestrates config refresh |
 | `system/reload/symlink-farm.sh` | `reload.sh` | Symlink maintenance + tool stub generation |

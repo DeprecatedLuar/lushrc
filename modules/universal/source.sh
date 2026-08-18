@@ -21,6 +21,9 @@ z() {
     . "$SYSDIR/shared/z-wrapper.sh" "$@"
 }
 
+# Cross-shell directory recency (zz) - must be sourced, not run: it cds
+source "$SYSDIR/shared/z-history.sh"
+
 # Source bash completions
 if [ -d "$TOOLS/bin/completions" ]; then
     for completion in "$TOOLS/bin/completions"/*; do
