@@ -9,7 +9,11 @@
 cleanup_broken_links() {
     local dirs=("$HOME/bin" "$HOME/bin/lib" "$HOME/bin/sys" "$HOME/.local/share" "$HOME/.local/bin")
     for dir in "${dirs[@]}"; do
-        find "$dir" -maxdepth 1 -xtype l -delete 2>/dev/null || true
+        # A missing dir is normal (e.g. $HOME/bin/sys before setup_sys ever ran) -
+        # skip it quietly. Once the dir exists, a real find/-delete failure (e.g.
+        # permission denied) is no longer swallowed.
+        [ -d "$dir" ] || continue
+        find "$dir" -maxdepth 1 -xtype l -delete
     done
 }
 
@@ -21,7 +25,15 @@ cleanup_empty_home_symlinks() {
         local target
         target=$(readlink -f "${link%/}")
         [ -d "$target" ] || continue
-        [ -z "$(ls -A "$target" 2>/dev/null)" ] && rm "${link%/}"
+
+        local listing
+        if listing=$(ls -A "$target" 2>&1); then
+            [ -z "$listing" ] && rm "${link%/}"
+        else
+            # Couldn't read $target (e.g. permission denied) - do NOT treat that
+            # as "empty"; removing the link on unreadable output would be a guess.
+            echo "symlink-farm: cannot read $target - leaving ${link%/}" >&2
+        fi
     done
 }
 
@@ -117,7 +129,7 @@ sync_system_links() {
 sync_tool_stubs
 
 setup_sys "$HOME/bin"
-ln -sfn "$HOME/.local/bin" "$HOME/bin/local" 2>/dev/null || true
+ln -sfn "$HOME/.local/bin" "$HOME/bin/local"
 link_contents "$TOOLS/bin" "$HOME/bin"
 link_contents "$PROJECTS/scripts" "$HOME/bin"
 # $BASHRC/bin is now in PATH directly - no symlinks needed
@@ -141,9 +153,10 @@ fi
 link_contents "$BASHRC/storage/services" "$HOME/.config/systemd"
 
 for svc in "$BASHRC/storage/services"/*.service; do
+    [ -f "$svc" ] || continue
     name=$(basename "$svc")
     if ! systemctl --user is-enabled "$name" &>/dev/null; then
-        systemctl --user enable "$name" 2>/dev/null || true
+        systemctl --user enable "$name" || echo "symlink-farm: failed to enable $name" >&2
     fi
 done
 
@@ -176,6 +189,53 @@ fi
 # $MEDIA and $wpp_dir may themselves be symlinks (Termux points $MEDIA at Android
 # shared storage). find does not descend into a symlinked path operand, so every
 # find below needs the trailing slash to force it.
+#
+# sync_media_gallery additionally has to walk through deliberate *top-level*
+# pointers under $MEDIA (Termux: $MEDIA/.storage -> real storage elsewhere) while
+# never walking through symlinks deeper in the tree (real depth-2 links such as
+# $MEDIA/krita/workspace -> $WORKSPACE/krita must NOT be indexed). No find below
+# ever uses -L, and the one dereference that happens is done explicitly, once,
+# against $MEDIA's own immediate children - there is no recursive follow step for
+# a loop to occur through. Do not "helpfully" add loop detection.
+
+# Links one already-classified file into its gallery by extension.
+_gallery_link() {
+    local file="$1" name="$2"
+    local ext="${file##*.}"
+    case "${ext,,}" in
+        png|jpg|jpeg|gif|webp|svg|tiff|tif|bmp|kra|xcf|psd)
+            ln -sf "$file" "$PICTURES_GALLERY/$name" ;;
+        mp4|mkv|webm|mov|avi|mpeg|mpg|flv|wmv)
+            ln -sf "$file" "$VIDEOS_GALLERY/$name" ;;
+        mp3|flac|wav|ogg|opus|aac|m4a|wma)
+            ln -sf "$file" "$AUDIO_GALLERY/$name" ;;
+    esac
+}
+
+# Scans one root (non-recursively-through-symlinks) for gallery-eligible files.
+# $name_prefix is stripped from each match to build the gallery entry name -
+# passing $MEDIA preserves today's naming for $MEDIA's own subdirectories;
+# passing a resolved top-level-pointer target makes files under it name as
+# though that root were $MEDIA itself (no leading ".storage-"/"storage-").
+_gallery_scan_root() {
+    local root="$1" name_prefix="$2"
+
+    while IFS= read -r -d '' file; do
+        local rel="${file#$name_prefix/}"
+        local name="${rel//\//-}"
+        _gallery_link "$file" "$name"
+    # Exclusions anchor to the root being scanned, not to $MEDIA: a pointer target
+    # carries its own gallery/screenshots/wallpapers subtrees (Termux's shared
+    # storage does), and $MEDIA-anchored patterns would never match them.
+    done < <(find "$root/" \
+        -not -path "$root/gallery/*" \
+        -not -ipath "$root/screenshots/*" \
+        -not -ipath "$root/wallpapers/*" \
+        -not -ipath "$root/wallpaper/*" \
+        -not -ipath "$root/wpp/*" \
+        -type f -print0)
+}
+
 sync_media_gallery() {
     [ -d "$MEDIA" ] || return 0
     [ "$MEDIA_LINKS_OK" = true ] || return 0
@@ -184,26 +244,47 @@ sync_media_gallery() {
     find "$PICTURES_GALLERY" "$VIDEOS_GALLERY" "$AUDIO_GALLERY" "$WALLPAPERS_GALLERY" \
         -maxdepth 1 -type l -delete 2>/dev/null || true
 
-    while IFS= read -r -d '' file; do
-        local rel="${file#$MEDIA/}"
-        local name="${rel//\//-}"
-        local ext="${file##*.}"
+    local media_resolved
+    media_resolved=$(readlink -f "$MEDIA")
 
-        case "${ext,,}" in
-            png|jpg|jpeg|gif|webp|svg|tiff|tif|bmp|kra|xcf|psd)
-                ln -sf "$file" "$PICTURES_GALLERY/$name" ;;
-            mp4|mkv|webm|mov|avi|mpeg|mpg|flv|wmv)
-                ln -sf "$file" "$VIDEOS_GALLERY/$name" ;;
-            mp3|flac|wav|ogg|opus|aac|m4a|wma)
-                ln -sf "$file" "$AUDIO_GALLERY/$name" ;;
+    # $MEDIA's own tree (ordinary subdirectories only - see loop-safety note above)
+    _gallery_scan_root "$MEDIA" "$MEDIA"
+
+    # Deliberate top-level pointers: dereference exactly one level. Skip anything
+    # that resolves back inside $MEDIA (would duplicate an entry already reachable
+    # directly - e.g. the screenshot.<ext> -> screenshots/latest.<ext> link
+    # sync_latest_screenshot creates), report and skip anything dangling, and
+    # dedupe two pointers that resolve to the same target.
+    local seen_targets=("$media_resolved")
+    local entry
+    while IFS= read -r -d '' entry; do
+        [ "$(basename "$entry")" = "gallery" ] && continue
+
+        local resolved
+        resolved=$(readlink -f "$entry")
+
+        # Check "resolves inside $MEDIA" before "resolves to a directory": a
+        # target like screenshots/latest.png (sync_latest_screenshot's own link)
+        # resolves to a FILE, not a dir, but it must be silently skipped as an
+        # in-tree duplicate, not reported as dangling.
+        case "$resolved" in
+            "$media_resolved"|"$media_resolved"/*) continue ;;
         esac
-    done < <(find "$MEDIA/" \
-        -not -path "$MEDIA/gallery/*" \
-        -not -ipath "$MEDIA/screenshots/*" \
-        -not -ipath "$MEDIA/wallpapers/*" \
-        -not -ipath "$MEDIA/wallpaper/*" \
-        -not -ipath "$MEDIA/wpp/*" \
-        -type f -print0 2>/dev/null)
+
+        if [ -z "$resolved" ] || [ ! -d "$resolved" ]; then
+            echo "symlink-farm: gallery root $entry does not resolve to a directory - skipping" >&2
+            continue
+        fi
+
+        local seen already_seen=false
+        for seen in "${seen_targets[@]}"; do
+            [ "$seen" = "$resolved" ] && already_seen=true && break
+        done
+        [ "$already_seen" = true ] && continue
+        seen_targets+=("$resolved")
+
+        _gallery_scan_root "$resolved" "$resolved"
+    done < <(find "$MEDIA/" -maxdepth 1 -type l -print0)
 }
 
 sync_media_gallery
@@ -224,7 +305,7 @@ sync_wallpapers_gallery() {
         local rel="${file#$wpp_dir/}"
         local name="${rel//\//-}"
         ln -sf "$file" "$WALLPAPERS_GALLERY/$name"
-    done < <(find "$wpp_dir/" -type f -print0 2>/dev/null)
+    done < <(find "$wpp_dir/" -type f -print0)
 }
 
 sync_wallpapers_gallery
@@ -236,6 +317,7 @@ SCREENSHOT_LINK_BASE="screenshot"      # $MEDIA/<base>.<ext>
 SCREENSHOT_GALLERY_BASE="latest-screenshot"
 
 sync_latest_screenshot() {
+    [ -d "$MEDIA" ] || return 0
     [ "$MEDIA_LINKS_OK" = true ] || return 0
 
     local screenshot_src=""
@@ -245,8 +327,9 @@ sync_latest_screenshot() {
         break
     done
 
-    # Drop links from a previous capture format so only one survives
-    find "$MEDIA/" -maxdepth 1 -type l -name "$SCREENSHOT_LINK_BASE.*" -delete 2>/dev/null || true
+    # Drop links from a previous capture format so only one survives. $MEDIA is
+    # already known to exist above, so a failure here is real and must surface.
+    find "$MEDIA/" -maxdepth 1 -type l -name "$SCREENSHOT_LINK_BASE.*" -delete
 
     [ -n "$screenshot_src" ] || return 0
     local ext="${screenshot_src##*.}"
