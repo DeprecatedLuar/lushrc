@@ -164,7 +164,10 @@ anything else that moves the shell are all captured by one path. Three rules mak
   store would make `zz` a no-op. Depth ≥ 2 is a requirement, not a nicety; history holds 10.
 - **Deleted directories are skipped at read time**, degrading to the next entry instead of failing.
 
-State lives in `/tmp/z-history-$USER` (same convention as `tx-undo-$USER`). `/tmp` is correct here:
+State lives in `${TMPDIR:-/tmp}/z-history-$USER` (same convention as `tx-undo-$USER`). Every
+lushrc temp path uses `${TMPDIR:-/tmp}` rather than a bare `/tmp`, since Termux and other
+sandboxed environments have no writable `/tmp` and point `$TMPDIR` elsewhere. A per-boot
+lifetime is correct here:
 after a reboot there are no other terminals whose position would be worth restoring.
 
 ## Key Utilities

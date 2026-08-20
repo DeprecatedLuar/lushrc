@@ -10,7 +10,7 @@
 # Output: BYTES \t PATH, largest first.
 # Usage: disk-consumers.sh [--rescan] [PATH]
 
-CACHE_DIR="/tmp/vch-disk-$USER"
+CACHE_DIR="${TMPDIR:-/tmp}/vch-disk-$USER"
 CACHE_PREFIX=scan
 CACHE_TTL_SECONDS=86400
 SCAN_DEPTH=1

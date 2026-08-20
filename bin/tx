@@ -93,7 +93,7 @@ if [[ $# -ge 2 ]]; then
 
 elif [[ "$1" == "undo" ]]; then
     # Undo last move
-    UNDO_DIR="/tmp/tx-undo-$USER"
+    UNDO_DIR="${TMPDIR:-/tmp}/tx-undo-$USER"
 
     if [[ ! -f "$UNDO_DIR/sources" ]] || [[ ! -f "$UNDO_DIR/dest" ]]; then
         echo "tx: nothing to undo" >&2

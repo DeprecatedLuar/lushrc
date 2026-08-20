@@ -31,7 +31,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROVIDER_DIR="$SCRIPT_DIR/../reclaim"
 PROVIDER_SUFFIX=.sh
 NO_BYTES=0
-CACHE_DIR="/tmp/vch-disk-$USER"
+CACHE_DIR="${TMPDIR:-/tmp}/vch-disk-$USER"
 CACHE_FILE="$CACHE_DIR/reclaim"
 CACHE_TTL_SECONDS=86400
 

@@ -10,7 +10,7 @@
 # `zz` is the global, last-writer-wins jump — deliberately a different
 # token, because it is a fuzzier thing than `-` has ever meant.
 
-Z_HISTORY_FILE="/tmp/z-history-$USER"
+Z_HISTORY_FILE="${TMPDIR:-/tmp}/z-history-$USER"
 Z_HISTORY_DEPTH=10
 
 # Prompt hook: record $PWD, newest first, deduped and trimmed.

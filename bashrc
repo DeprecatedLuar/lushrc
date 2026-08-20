@@ -173,7 +173,7 @@ if [[ $- == *i* ]]; then
     find "$HOME" "$HOME/.config" -maxdepth 1 -xtype l -delete 2>/dev/null
 
     # Boot tasks (only run once per boot via /tmp flag with content markers)
-    FLAG="/tmp/.lushrc_boot_cleanup"
+    FLAG="${TMPDIR:-/tmp}/.lushrc_boot_cleanup"
     if ! grep -q "wormhole" "$FLAG" 2>/dev/null; then
         command -v wormhole &>/dev/null && wormhole kill 2>/dev/null
         echo "wormhole" >> "$FLAG"
