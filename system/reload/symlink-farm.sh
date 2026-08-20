@@ -36,6 +36,20 @@ setup_sys() {
     mkdir -p "$user_dir/sys"
 }
 
+LINK_PROBE_NAME=".lushrc-link-probe"   # transient; removed before supports_symlinks returns
+
+# Some filesystems accept writes but reject symlink(2) outright — Android's FUSE
+# shared storage is the case that forced this. Probe the capability, not the
+# platform, so no host ever needs special-casing here.
+supports_symlinks() {
+    local dir="$1"
+    local probe="$dir/$LINK_PROBE_NAME.$$"
+
+    [ -d "$dir" ] || return 1
+    ln -s "$dir" "$probe" 2>/dev/null || return 1
+    rm -f "$probe"
+}
+
 link_contents() {
     local source_dir="$1"
     local target_dir="$2"
@@ -151,8 +165,20 @@ link_contents "$HOME/.nix-profile/share/applications" "$HOME/.local/share/applic
 
 #--[MEDIA GALLERY]-------------------------------
 
+# Every sync below builds symlinks under $MEDIA. Decide once whether that is even
+# possible; without this the whole media section fails silently per-file.
+MEDIA_LINKS_OK=true
+if [ -d "$MEDIA" ] && ! supports_symlinks "$MEDIA"; then
+    MEDIA_LINKS_OK=false
+    echo "symlink-farm: $MEDIA rejects symlinks - skipping gallery, wallpapers, screenshot and workspace crosslinks" >&2
+fi
+
+# $MEDIA and $wpp_dir may themselves be symlinks (Termux points $MEDIA at Android
+# shared storage). find does not descend into a symlinked path operand, so every
+# find below needs the trailing slash to force it.
 sync_media_gallery() {
     [ -d "$MEDIA" ] || return 0
+    [ "$MEDIA_LINKS_OK" = true ] || return 0
 
     # Clear existing symlinks (real files untouched)
     find "$PICTURES_GALLERY" "$VIDEOS_GALLERY" "$AUDIO_GALLERY" "$WALLPAPERS_GALLERY" \
@@ -171,7 +197,7 @@ sync_media_gallery() {
             mp3|flac|wav|ogg|opus|aac|m4a|wma)
                 ln -sf "$file" "$AUDIO_GALLERY/$name" ;;
         esac
-    done < <(find "$MEDIA" \
+    done < <(find "$MEDIA/" \
         -not -path "$MEDIA/gallery/*" \
         -not -ipath "$MEDIA/screenshots/*" \
         -not -ipath "$MEDIA/wallpapers/*" \
@@ -190,6 +216,7 @@ sync_wallpapers_gallery() {
         [ -d "$MEDIA/$_d" ] && wpp_dir="$MEDIA/$_d" && break
     done
     [ -n "$wpp_dir" ] || return 0
+    [ "$MEDIA_LINKS_OK" = true ] || return 0
 
     mkdir -p "$WALLPAPERS_GALLERY"
 
@@ -197,7 +224,7 @@ sync_wallpapers_gallery() {
         local rel="${file#$wpp_dir/}"
         local name="${rel//\//-}"
         ln -sf "$file" "$WALLPAPERS_GALLERY/$name"
-    done < <(find "$wpp_dir" -type f -print0 2>/dev/null)
+    done < <(find "$wpp_dir/" -type f -print0 2>/dev/null)
 }
 
 sync_wallpapers_gallery
@@ -209,6 +236,8 @@ SCREENSHOT_LINK_BASE="screenshot"      # $MEDIA/<base>.<ext>
 SCREENSHOT_GALLERY_BASE="latest-screenshot"
 
 sync_latest_screenshot() {
+    [ "$MEDIA_LINKS_OK" = true ] || return 0
+
     local screenshot_src=""
     for candidate in "$MEDIA/screenshots/$SCREENSHOT_SOURCE_BASE".*; do
         [ -f "$candidate" ] || continue
@@ -217,7 +246,7 @@ sync_latest_screenshot() {
     done
 
     # Drop links from a previous capture format so only one survives
-    find "$MEDIA" -maxdepth 1 -type l -name "$SCREENSHOT_LINK_BASE.*" -delete 2>/dev/null || true
+    find "$MEDIA/" -maxdepth 1 -type l -name "$SCREENSHOT_LINK_BASE.*" -delete 2>/dev/null || true
 
     [ -n "$screenshot_src" ] || return 0
     local ext="${screenshot_src##*.}"
@@ -237,6 +266,9 @@ sync_latest_screenshot
 sync_workspace_media() {
     [ -d "$WORKSPACE" ] || return 0
     [ -d "$MEDIA" ] || return 0
+    # Both directions are needed for a crosslink to mean anything, and the media
+    # side is the one that can be unwritable - so it's all or nothing.
+    [ "$MEDIA_LINKS_OK" = true ] || return 0
 
     for ws_dir in "$WORKSPACE"/*/ "$WORKSPACE"/*/*/; do
         [ -d "$ws_dir" ] || continue
