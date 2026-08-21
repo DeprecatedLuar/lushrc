@@ -36,7 +36,9 @@ alias venv='source ./venv/bin/activate'
 # Print install one-liner (for spreading the config)
 alias mitosis='echo "curl -fsSL https://raw.githubusercontent.com/DeprecatedLuar/lushrc/main/install.sh | bash"'
 
+# Binary extensions
 
+alias ssh='lsh'
 
 
 # Tool completions — guarded since bin/lib/<tool>/ may not be installed yet
