@@ -131,6 +131,7 @@ b/|bin/ → $HOME/bin/     d/  → $HOME/Downloads/   l/ → $HOME/.local/
 sb/ → /usr/local/bin/   doc/ → $DOCUMENTS/    etc/ → /etc/
 s/|serv/|ser/ → $SERVICES_DIR/
 med/|pic/|vid/ → $MEDIA/
+trash/ → $XDG_TRASH_DIR or $XDG_DATA_HOME/Trash
 ```
 
 **Resolution Order**: nav index expansion → exact path → right-to-left fuzzy decomposition → glob matching with scoring → zoxide fallback.
@@ -308,7 +309,8 @@ lush version         # commit + age
 - **Grace handling**: `|| true` / `|| return 0` — scripts succeed even if dirs don't exist
 - **Configuration-as-code**: shell scripts, not YAML/TOML
 - **Git-ignored customization**: `modules/local.sh` for user-specific overrides
-- **Status-line grammar** (emerging convention, currently `bigbrother`/`bb`, `cronotrigger`/`ctg`, `lsh`): list and confirmation output uses a leading ASCII mark instead of prose — `+ name` (added/enabled/reachable), dim `- name` (disabled/unreachable), dim strikethrough `x name` (removed). Color/strikethrough styling is TTY-only (`[[ -t 1 && -z "${NO_COLOR:-}" ]]`); the ASCII mark itself is always printed so piped/logged output stays greppable (`grep '^+'`). Each tool implements its own `<tool>_status_line mark name` helper (e.g. `bigbrother_status_line`, `cronotrigger_status_line`, `lsh_status_line`) rather than sharing one across tools, since each has its own module-loading boundary. When adding a new tool with enable/disable/add/remove semantics, follow this grammar instead of inventing new prose messages.
+- **Status-line grammar** (emerging convention, currently `bigbrother`/`bb`, `cronotrigger`/`ctg`, `lsh`): list output uses a leading ASCII mark instead of prose — `+ name` (added/enabled/reachable), dim `- name` (disabled/unreachable), dim strikethrough `x name` (removed). Color/strikethrough styling is TTY-only (`[[ -t 1 && -z "${NO_COLOR:-}" ]]`); the ASCII mark itself is always printed so piped/logged output stays greppable (`grep '^+'`). Each tool implements its own `<tool>_status_line mark name` helper (e.g. `bigbrother_status_line`, `cronotrigger_status_line`, `lsh_status_line`) rather than sharing one across tools, since each has its own module-loading boundary. When adding a new tool with enable/disable/add/remove semantics, follow this grammar instead of inventing new prose messages.
+  Mutating commands (`add`, `rm`, `enable`, `run`, `stop`, ...) are silent on success — Unix-style, no confirmation output — and print only to stderr on error; the mark is something you read back with `ls`/`get`, not something a mutation echoes at you. `bigbrother` extends the vocabulary beyond `+ - x` to seven marks (`* ~ + ! = -  x`) because it tracks two independent axes — persistence (enabled/disabled) and liveness (running/stopped) — where the other tools only track one; this extension is local to `bigbrother`, not a convention the other tools are expected to adopt.
 
 ## Architecture Reference
 

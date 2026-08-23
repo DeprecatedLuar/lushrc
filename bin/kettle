@@ -17,12 +17,39 @@ EXCLUDED_NAME_PATTERNS=(
 CUSTOM_REGISTRY="$HOME/.local/share/kettle/custom_games.json"
 CUSTOM_PREFIX_DIR="$HOME/.local/share/kettle/prefixes"
 CUSTOM_WRAPPER_DIR="$HOME/.local/share/kettle/custom_wrappers"
-CUSTOM_GAME_DEPS=(jq steam-run umu-run)
+CUSTOM_GAME_DEPS=(jq umu-run)
+
+# Shared prefix for `kettle run` — one-off launches never touch custom_games.json,
+# but still get a persistent WINEPREFIX so dependencies aren't reinstalled every run
+RUN_PREFIX="$CUSTOM_PREFIX_DIR/kettle-run"
+RUN_DEPS=(umu-run)
 
 # Per-slug overrides (mangohud, offload) for custom games only — Steam-library
 # games run inside Steam's own pressure-vessel container and can't be reached
 # from a kettle wrapper; see kettle help
 SETTINGS_REGISTRY="$HOME/.local/share/kettle/settings.json"
+
+# Prefix gallery — one browsable place for every wine prefix on the machine.
+# Symlinks point OUT at the real prefixes; nothing is ever moved and no launcher
+# writes through the gallery. Sources whose own directories are already keyed by
+# human-readable names get one static pointer; Steam and Hydra are enumerated
+# because both are keyed by numeric ID (appid / hydra objectId).
+PREFIX_GALLERY="$HOME/Games/prefixes"
+PREFIX_STEAM_DIR="$PREFIX_GALLERY/steam"
+PREFIX_HYDRA_DIR="$PREFIX_GALLERY/hydra"
+PREFIX_SOURCES=(
+    "heroic:$HOME/Games/Heroic/Prefixes/default"
+    "umu:$HOME/Games/umu"
+    "kettle:$CUSTOM_PREFIX_DIR"
+)
+
+# Hydra keys prefixes by numeric objectId (Steam appid for shop:"steam" entries,
+# but these are Hydra-managed sideloads, never Steam-installed — no relation to
+# STEAM_ROOT/compatdata). Names live in a real LevelDB (hydra-db), unreadable
+# without pulling in node + classic-level, so entries are labeled via
+# inspect_prefix's save/config discovery instead, falling back to the raw
+# objectId when nothing is found — see sync_hydra_prefixes.
+HYDRA_PREFIX_DIR="$HOME/.config/hydralauncher/wine-prefixes"
 
 #--[Dependencies]--------------------------------------------------------------
 
@@ -65,13 +92,18 @@ fi
 # Proton build for custom (non-Steam) games — reuses whatever Proton Steam
 # already manages, so custom games don't depend on a separate launcher
 detect_proton_path() {
-    local dir
-    for dir in "$STEAM_ROOT/compatibilitytools.d"/UMU-Proton* "$STEAM_ROOT/compatibilitytools.d"/GE-Proton*; do
-        [[ -d "$dir" ]] && { echo "$dir"; return 0; }
+    local dir candidate
+    for candidate in UMU-Proton GE-Proton; do
+        dir=$(find "$STEAM_ROOT/compatibilitytools.d" -mindepth 1 -maxdepth 1 \
+            -type d -name "$candidate-*" -printf '%f\n' 2>/dev/null | sort -V | tail -n 1)
+        [[ -n "$dir" ]] && { echo "$STEAM_ROOT/compatibilitytools.d/$dir"; return 0; }
     done
-    for dir in "$STEAM_ROOT/steamapps/common"/Proton\ -\ Experimental "$STEAM_ROOT/steamapps/common"/Proton\ */; do
-        [[ -d "$dir" ]] && { echo "${dir%/}"; return 0; }
-    done
+
+    dir="$STEAM_ROOT/steamapps/common/Proton - Experimental"
+    [[ -d "$dir" ]] && { echo "$dir"; return 0; }
+    dir=$(find "$STEAM_ROOT/steamapps/common" -mindepth 1 -maxdepth 1 \
+        -type d -name 'Proton *' -printf '%f\n' 2>/dev/null | sort -V | tail -n 1)
+    [[ -n "$dir" ]] && { echo "$STEAM_ROOT/steamapps/common/$dir"; return 0; }
     return 1
 }
 
@@ -126,7 +158,39 @@ get_slug() {
     echo "$name" | tr -d "'" | tr '[:upper:]' '[:lower:]' | sed "s/[^a-z0-9]/-/g" | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//'
 }
 
+# Normalize a raw title for storage: lowercase, whitespace collapsed to '-'.
+# Used by `add` and `edit` before deriving a slug via get_slug.
+normalize_title() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -s '[:blank:]' '-'
+}
+
 #--[Wrapper Generation]-------------------------------------------------------
+
+# Install generated content only when it changed. Rendering through a temporary
+# file keeps an interrupted generation from leaving a partial wrapper behind.
+write_generated_wrapper() {
+    local wrapper_path="$1" temp_path
+    temp_path=$(mktemp "${wrapper_path}.tmp.XXXXXX") || return 1
+    if ! cat > "$temp_path"; then
+        rm -f "$temp_path"
+        return 1
+    fi
+    if [[ -f "$wrapper_path" ]] && cmp -s "$temp_path" "$wrapper_path"; then
+        rm -f "$temp_path"
+    elif ! mv -f -- "$temp_path" "$wrapper_path"; then
+        rm -f "$temp_path"
+        return 1
+    fi
+    chmod +x "$wrapper_path"
+}
+
+# Ensure a wrapper symlink points at the requested target without touching an
+# already-correct link.
+ensure_wrapper_symlink() {
+    local target="$1" link="$2"
+    [[ -L "$link" && "$(readlink "$link")" == "$target" ]] && return 0
+    ln -sfn -- "$target" "$link"
+}
 
 # Create a single wrapper script and symlink
 create_wrapper() {
@@ -136,7 +200,7 @@ create_wrapper() {
     local symlink_path="$SYMLINK_DIR/$name"
 
     # Create wrapper script
-    if ! cat > "$wrapper_path" <<EOF
+    if ! write_generated_wrapper "$wrapper_path" <<EOF
 #!/usr/bin/env bash
 # kettle-generated
 exec steam -applaunch $appid "\$@"
@@ -152,7 +216,7 @@ EOF
     fi
 
     # Create symlink
-    if ! ln -sf "$wrapper_path" "$symlink_path"; then
+    if ! ensure_wrapper_symlink "$wrapper_path" "$symlink_path"; then
         echo "Warning: failed to symlink $symlink_path" >&2
         return 1
     fi
@@ -212,6 +276,17 @@ init_wrappers() {
         [[ -n "$initials" ]] && create_wrapper "$initials" "$appid"
         create_wrapper "$slug" "$appid"
     done < <(list_games)
+
+    # Self-heal custom (sideloaded) games the same way: their wrapper/symlink
+    # only gets (re)written at `add`/`edit` time otherwise, so a wiped
+    # CUSTOM_WRAPPER_DIR or a manually-deleted symlink would silently break
+    # the launcher until the user re-ran `edit`.
+    local custom_slug custom_title custom_exe custom_entry custom_prefix
+    while IFS='|' read -r custom_slug custom_title custom_exe; do
+        custom_entry=$(get_custom_game "$custom_slug") || continue
+        custom_prefix="${custom_entry#*|}"
+        create_custom_wrapper "$custom_slug" "$custom_exe" "$custom_prefix"
+    done < <(list_custom_games)
 }
 
 #--[Resolution]----------------------------------------------------------------
@@ -282,6 +357,15 @@ get_custom_game() {
     jq -r --arg k "$slug" '.[$k] | select(. != null) | "\(.executable)|\(.prefix)"' "$CUSTOM_REGISTRY"
 }
 
+# Look up a custom game's title + executable + prefix by slug (kettle edit)
+get_custom_game_full() {
+    local slug="$1"
+    init_custom_registry
+    jq -r --arg k "$slug" \
+        '.[$k] | select(. != null) | "\(.title)|\(.executable)|\(.prefix)"' \
+        "$CUSTOM_REGISTRY"
+}
+
 #--[Settings Registry]-----------------------------------------------------------
 
 # Ensure the per-slug settings registry file exists
@@ -337,38 +421,71 @@ create_custom_wrapper() {
     local exec_prefix
     exec_prefix=$(kettle_exec_prefix "$slug")
 
+    # exe/prefix are user-supplied paths (kettle add/edit) — %q-escape before
+    # interpolating into the generated script so a quote/$/backtick in either
+    # can't break out of the string or inject commands into the wrapper.
+    local exe_q prefix_q
+    printf -v exe_q '%q' "$exe"
+    printf -v prefix_q '%q' "$prefix"
+
     mkdir -p "$CUSTOM_WRAPPER_DIR" "$SYMLINK_DIR" "$prefix"
 
-    if ! cat > "$wrapper_path" <<EOF
+    if ! write_generated_wrapper "$wrapper_path" <<EOF
 #!/usr/bin/env bash
 # kettle-generated (custom/sideload)
-if ! command -v steam-run >/dev/null 2>&1 || ! command -v umu-run >/dev/null 2>&1; then
-    echo "Error: missing required dependencies: steam-run umu-run" >&2
+if ! command -v umu-run >/dev/null 2>&1; then
+    echo "Error: missing required dependency: umu-run" >&2
     exit 1
 fi
-export WINEPREFIX="$prefix"
-export GAMEID=umu-default
-for _d in "$STEAM_ROOT/compatibilitytools.d"/UMU-Proton* "$STEAM_ROOT/compatibilitytools.d"/GE-Proton* "$STEAM_ROOT/steamapps/common"/Proton\ -\ Experimental "$STEAM_ROOT/steamapps/common"/Proton\ */; do
-    [[ -d "\$_d" ]] && { export PROTONPATH="\${_d%/}"; break; }
-done
+export WINEPREFIX=$prefix_q
+export GAMEID="\${GAMEID:-umu-default}"
+if [[ -z "\${PROTONPATH:-}" ]]; then
+    for _family in UMU-Proton GE-Proton; do
+        _d=\$(find "$STEAM_ROOT/compatibilitytools.d" -mindepth 1 -maxdepth 1 \\
+            -type d -name "\${_family}-*" -printf '%f\\n' 2>/dev/null | sort -V | tail -n 1)
+        if [[ -n "\$_d" ]]; then
+            export PROTONPATH="$STEAM_ROOT/compatibilitytools.d/\$_d"
+            break
+        fi
+    done
+fi
+if [[ -z "\${PROTONPATH:-}" && -d "$STEAM_ROOT/steamapps/common/Proton - Experimental" ]]; then
+    export PROTONPATH="$STEAM_ROOT/steamapps/common/Proton - Experimental"
+fi
+if [[ -z "\${PROTONPATH:-}" ]]; then
+    _d=\$(find "$STEAM_ROOT/steamapps/common" -mindepth 1 -maxdepth 1 \\
+        -type d -name 'Proton *' -printf '%f\\n' 2>/dev/null | sort -V | tail -n 1)
+    [[ -n "\$_d" ]] && export PROTONPATH="$STEAM_ROOT/steamapps/common/\$_d"
+fi
 if [[ -z "\${PROTONPATH:-}" ]]; then
     echo "Error: no Proton build found under $STEAM_ROOT" >&2
     exit 1
 fi
-exec ${exec_prefix}steam-run umu-run "$exe" "\$@"
+_exe=$exe_q
+_working_dir=\$(dirname -- "\$_exe")
+_exe_name=\$(basename -- "\$_exe")
+if ! cd -- "\$_working_dir"; then
+    echo "Error: could not set working directory: \$_working_dir" >&2
+    exit 1
+fi
+exec ${exec_prefix}umu-run "./\$_exe_name" "\$@"
 EOF
     then
         echo "Warning: failed to write wrapper $wrapper_path" >&2
         return 1
     fi
 
-    chmod +x "$wrapper_path" || { echo "Warning: failed to chmod $wrapper_path" >&2; return 1; }
-    ln -sf "$wrapper_path" "$symlink_path" || { echo "Warning: failed to symlink $symlink_path" >&2; return 1; }
+    ensure_wrapper_symlink "$wrapper_path" "$symlink_path" || {
+        echo "Warning: failed to symlink $symlink_path" >&2
+        return 1
+    }
 }
 
-# Register a new custom (sideloaded) game and generate its wrapper
+# Register a new custom (sideloaded) game and generate its wrapper. If
+# prefix_override is set (from `add --prefix`), reuse that existing prefix
+# path instead of minting a fresh one under CUSTOM_PREFIX_DIR.
 add_custom_game() {
-    local title="$1" exe="$2"
+    local title="$1" exe="$2" prefix_override="${3:-}"
     check_deps "${CUSTOM_GAME_DEPS[@]}"
 
     if [[ -z "$PROTON_PATH" ]]; then
@@ -387,7 +504,7 @@ add_custom_game() {
         echo "Error: could not derive a slug from name: $title" >&2
         exit 1
     fi
-    prefix="$CUSTOM_PREFIX_DIR/$slug"
+    prefix="${prefix_override:-$CUSTOM_PREFIX_DIR/$slug}"
 
     init_custom_registry
     if ! jq --arg k "$slug" --arg title "$title" --arg exe "$exe" --arg prefix "$prefix" \
@@ -400,7 +517,348 @@ add_custom_game() {
     mv "$CUSTOM_REGISTRY.tmp" "$CUSTOM_REGISTRY"
 
     create_custom_wrapper "$slug" "$exe" "$prefix"
-    echo "Added: $title -> $slug"
+    kettle_status_line + "$slug"
+}
+
+#--[Prefix Gallery]--------------------------------------------------------------
+
+# Point PREFIX_GALLERY at each source in PREFIX_SOURCES. Uses `ln -sfn`, not
+# `-sf` — with `-sf`, re-running against an existing symlink-to-directory drops
+# the new link INSIDE that directory instead of replacing it. Sources that don't
+# exist on this machine (e.g. no Heroic installed) are skipped, not errored.
+sync_prefix_pointers() {
+    mkdir -p "$PREFIX_GALLERY"
+    local entry name target
+    for entry in "${PREFIX_SOURCES[@]}"; do
+        name="${entry%%:*}"
+        target="${entry#*:}"
+        [[ -d "$target" ]] || continue
+        ln -sfn "$target" "$PREFIX_GALLERY/$name"
+    done
+}
+
+# Enumerate Steam-library prefixes by name into PREFIX_STEAM_DIR. Driven off
+# list_games() (manifests), not compatdata/ directly, so Proton-internal builds
+# are excluded via EXCLUDED_NAME_PATTERNS and orphaned/synthetic compatdata
+# entries with no manifest never appear. Prunes stale links via set difference
+# (not broken-link check) since an uninstalled game's compatdata often survives
+# its manifest.
+sync_steam_prefixes() {
+    mkdir -p "$PREFIX_STEAM_DIR"
+    local appid name pfx link_name wanted=() claimed=()
+    while IFS='|' read -r appid name; do
+        claimed+=("$appid")
+        pfx="$STEAM_ROOT/steamapps/compatdata/$appid/pfx"
+        [[ -d "$pfx" ]] || continue
+        link_name="$name"
+        if [[ -e "$PREFIX_STEAM_DIR/$link_name" ]] && [[ " ${wanted[*]} " == *" $link_name "* ]]; then
+            link_name="$name ($appid)"
+        fi
+        ln -sfn "$pfx" "$PREFIX_STEAM_DIR/$link_name"
+        wanted+=("$link_name")
+    done < <(list_games)
+
+    # Claim every appid with a manifest at all — including ones list_games()
+    # itself hides via EXCLUDED_NAME_PATTERNS (Proton*, runtimes) — so the
+    # fallback pass below never re-surfaces those as an unidentified "game".
+    local manifest mid
+    for manifest in "$STEAM_ROOT/steamapps"/appmanifest_*.acf; do
+        [[ -f "$manifest" ]] || continue
+        mid=$(grep -m1 -oP '"appid"\s*"\K[0-9]+' "$manifest")
+        [[ -n "$mid" ]] && claimed+=("$mid")
+    done
+
+    # Non-Steam shortcuts get a compatdata dir too but no manifest — their
+    # metadata lives in binary shortcuts.vdf, not worth parsing. Resolve a
+    # label via inspect_prefix's save/config discovery instead; fall back to
+    # the raw appid if nothing is found. Numeric suffix on collision per user
+    # request, since a raw-appid fallback has no natural disambiguator like the
+    # named branch's "(appid)" above.
+    local dir id ipfx label n
+    for dir in "$STEAM_ROOT/steamapps/compatdata"/*/; do
+        [[ -d "$dir" ]] || continue
+        id=$(basename "${dir%/}")
+        [[ " ${claimed[*]} " == *" $id "* ]] && continue
+        ipfx="${dir%/}/pfx"
+        [[ -d "$ipfx/drive_c" ]] || continue
+        label=$(inspect_prefix "$ipfx" 2>/dev/null | head -1)
+        [[ -z "$label" || "$label" == "(nothing found)" ]] && label="$id"
+        link_name="$label"
+        n=1
+        while [[ " ${wanted[*]} " == *" $link_name "* ]]; do
+            link_name="$label ($n)"
+            ((n++))
+        done
+        ln -sfn "$ipfx" "$PREFIX_STEAM_DIR/$link_name"
+        wanted+=("$link_name")
+    done
+
+    local link base
+    for link in "$PREFIX_STEAM_DIR"/*; do
+        [[ -e "$link" || -L "$link" ]] || continue
+        base=$(basename "$link")
+        [[ " ${wanted[*]} " == *" $base "* ]] || rm -f "$link"
+    done
+}
+
+# Enumerate Hydra-managed prefixes into PREFIX_HYDRA_DIR. No manifest exists to
+# name these (see HYDRA_PREFIX_DIR comment on why hydra-db isn't readable), so
+# each is resolved the same way as unclaimed Steam compatdata entries: run
+# inspect_prefix's save/config discovery and fall back to the raw objectId if
+# nothing is found. Numeric suffix on collision. Skipped entirely if Hydra
+# isn't installed on this machine.
+sync_hydra_prefixes() {
+    [[ -d "$HYDRA_PREFIX_DIR" ]] || return 0
+    mkdir -p "$PREFIX_HYDRA_DIR"
+    local dir id label link_name n wanted=()
+    for dir in "$HYDRA_PREFIX_DIR"/*/; do
+        [[ -d "$dir" ]] || continue
+        id=$(basename "${dir%/}")
+        if [[ -d "${dir%/}/drive_c" ]]; then
+            label=$(inspect_prefix "${dir%/}" 2>/dev/null | head -1)
+        else
+            label=""
+        fi
+        [[ -z "$label" || "$label" == "(nothing found)" ]] && label="$id"
+        link_name="$label"
+        n=1
+        while [[ " ${wanted[*]} " == *" $link_name "* ]]; do
+            link_name="$label ($n)"
+            ((n++))
+        done
+        ln -sfn "${dir%/}" "$PREFIX_HYDRA_DIR/$link_name"
+        wanted+=("$link_name")
+    done
+
+    local link base
+    for link in "$PREFIX_HYDRA_DIR"/*; do
+        [[ -e "$link" || -L "$link" ]] || continue
+        base=$(basename "$link")
+        [[ " ${wanted[*]} " == *" $base "* ]] || rm -f "$link"
+    done
+}
+
+# Enumerate every prefix in the gallery, flat, one line each:
+# source<TAB>name<TAB>real_path (real_path empty if the entry is dangling).
+# Single source of truth consumed by both list_prefix_gallery and `kettle rm`.
+walk_prefix_gallery() {
+    local entry source path child cname real
+    for entry in "${PREFIX_SOURCES[@]}"; do
+        source="${entry%%:*}"
+        path="$PREFIX_GALLERY/$source"
+        [[ -e "$path" ]] || continue
+        for child in "$path"/*/; do
+            [[ -e "$child" ]] || continue
+            cname=$(basename "$child")
+            real=$(readlink -f "$child")
+            printf '%s\t%s\t%s\n' "$source" "$cname" "$real"
+        done
+    done
+    local link base
+    for link in "$PREFIX_STEAM_DIR"/*; do
+        [[ -e "$link" || -L "$link" ]] || continue
+        base=$(basename "$link")
+        if [[ -e "$link" ]]; then
+            printf '%s\t%s\t%s\n' "steam" "$base" "$(readlink -f "$link")"
+        else
+            printf '%s\t%s\t%s\n' "steam" "$base" ""
+        fi
+    done
+    for link in "$PREFIX_HYDRA_DIR"/*; do
+        [[ -e "$link" || -L "$link" ]] || continue
+        base=$(basename "$link")
+        if [[ -e "$link" ]]; then
+            printf '%s\t%s\t%s\n' "hydra" "$base" "$(readlink -f "$link")"
+        else
+            printf '%s\t%s\t%s\n' "hydra" "$base" ""
+        fi
+    done
+}
+
+# Build the flat, space-free label for a gallery entry: source_name, with any
+# whitespace in the name collapsed to '-'. Single source of truth so display
+# (list_prefix_gallery) and resolution (prefix rm) never drift apart.
+gallery_label() {
+    local source="$1" name="$2"
+    echo "${source}_${name// /-}"
+}
+
+# Resolve a gallery label (e.g. "steam_Half-Life-2") to its real prefix path.
+# Exact match first, case-insensitive fallback second — same two-pass lookup
+# `prefix rm` used before this was extracted. Echoes the resolved path and
+# returns 0 on a single match. On no match: prints an error unless "$2" is
+# "quiet" (callers that want to fall back to treating $1 as a literal path
+# instead), and returns 1. On an ambiguous match: always prints an error
+# (actionable regardless of quiet mode) and returns 2, so callers can tell
+# "not found" apart from "found too many" and only fall through on the former.
+resolve_gallery_prefix() {
+    local target="$1" quiet="${2:-}" source_ target_name real label_
+    local -a matches=()
+    while IFS=$'\t' read -r source_ target_name real; do
+        [[ -n "$real" ]] || continue
+        label_=$(gallery_label "$source_" "$target_name")
+        [[ "$label_" == "$target" ]] && matches+=("$label_|$real")
+    done < <(walk_prefix_gallery)
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        while IFS=$'\t' read -r source_ target_name real; do
+            [[ -n "$real" ]] || continue
+            label_=$(gallery_label "$source_" "$target_name")
+            [[ "${label_,,}" == "${target,,}" ]] && matches+=("$label_|$real")
+        done < <(walk_prefix_gallery)
+    fi
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        [[ "$quiet" == quiet ]] || echo "Unknown prefix: $target (see 'kettle prefixes')" >&2
+        return 1
+    fi
+    if [[ ${#matches[@]} -gt 1 ]]; then
+        echo "Ambiguous prefix: $target — matches:" >&2
+        printf '  %s\n' "${matches[@]%%|*}" >&2
+        return 2
+    fi
+    echo "${matches[0]#*|}"
+}
+
+# Resolve a prefix field/flag value to a real path: gallery label first
+# (quiet — a miss isn't an error here), literal path fallback second. An
+# ambiguous gallery match is still a hard error either way — only a lookup
+# miss falls through to path resolution.
+resolve_prefix_input() {
+    local target="$1" resolved rc
+    resolved=$(resolve_gallery_prefix "$target" quiet)
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+        echo "$resolved"
+        return 0
+    fi
+    if [[ $rc -eq 2 ]]; then
+        return 1
+    fi
+    target="${target/#\~/$HOME}"
+    realpath -m -- "$target"
+}
+
+# Reverse of resolve_prefix_input: given a real prefix path, echo its gallery
+# label if the gallery has an entry pointing at it, else echo the path
+# unchanged. Used so `kettle edit` shows the friendly label a prefix was
+# picked from instead of the raw path, whenever one exists.
+gallery_label_for_path() {
+    local path="$1" source_ target_name real
+    while IFS=$'\t' read -r source_ target_name real; do
+        if [[ -n "$real" && "$real" == "$path" ]]; then
+            gallery_label "$source_" "$target_name"
+            return 0
+        fi
+    done < <(walk_prefix_gallery)
+    echo "$path"
+}
+
+# Print the prefix gallery flat: <source>_<name> with size. + = resolves,
+# dim - = dangling (matches kettle_status_line).
+list_prefix_gallery() {
+    local entry name path
+    for entry in "${PREFIX_SOURCES[@]}"; do
+        name="${entry%%:*}"
+        path="$PREFIX_GALLERY/$name"
+        [[ -e "$path" ]] || kettle_status_line - "$name (not present)"
+    done
+    local source cname real label bytes
+    local sized=() broken=()
+    while IFS=$'\t' read -r source cname real; do
+        label=$(gallery_label "$source" "$cname")
+        if [[ -n "$real" && -d "$real" ]]; then
+            bytes=$(du -sb "$real" 2>/dev/null | cut -f1)
+            sized+=("${bytes:-0}"$'\t'"$label")
+        else
+            broken+=("$label")
+        fi
+    done < <(walk_prefix_gallery)
+    if [[ ${#sized[@]} -gt 0 ]]; then
+        local sources=() games=()
+        local l
+        for l in "${sized[@]}"; do
+            l="${l#*$'\t'}"
+            sources+=("${l%%_*}")
+            games+=("${l#*_}")
+        done
+        local src_width game_width width
+        src_width=$(kettle_max_len sources)
+        game_width=$(kettle_max_len games)
+        width=$(( src_width + 1 + game_width ))
+        local dim="" reset=""
+        if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+            dim=$'\033[2m'
+            reset=$'\033[0m'
+        fi
+        local src game size srcpad
+        while IFS=$'\t' read -r bytes label; do
+            src="${label%%_*}"
+            game="${label#*_}"
+            size=$(numfmt --to=iec --suffix=B "$bytes")
+            srcpad=$(( src_width - ${#src} ))
+            kettle_status_line_aligned + "${dim}$(printf '%*s' "$srcpad" "")${src}_${reset}${game}" "$(( src_width + 1 + ${#game} ))" "$width" "$size"
+        done < <(printf '%s\n' "${sized[@]}" | sort -rn)
+    fi
+    local b
+    for b in "${broken[@]}"; do
+        kettle_status_line - "$b (broken)"
+    done
+}
+
+# Discover what a wine prefix is for by listing (not guessing) the contents of
+# the conventional save/config parent folders, glob across every users/* since
+# accounts aren't standardized across sources (a Hydra prefix had both "luar"
+# and "steamuser" populated). Pure `ls`/find — no wine invocation, so no risk
+# of the mutation `wine uninstaller --list` caused when tested against a live
+# Steam prefix (rewrote system.reg/userdef.reg, left a winedevice.exe running).
+inspect_prefix() {
+    local prefix="$1"
+    if [[ ! -d "$prefix/drive_c" ]]; then
+        echo "Error: not a wine prefix (no drive_c): $prefix" >&2
+        exit 1
+    fi
+    local candidates=(
+        "Documents/My Games"
+        "AppData/Roaming"
+        "AppData/Local"
+        "AppData/LocalLow"
+    )
+    # Wine/Proton skeleton dirs present in every prefix regardless of game —
+    # confirmed by checking an empty prefix (Microsoft, Temp) and a
+    # dxvk-shader-cache prefix; excluded as noise, not game identity.
+    local noise=(Microsoft Temp dxvk)
+    local userdir sub name found=()
+    for userdir in "$prefix/drive_c/users"/*/; do
+        [[ -d "$userdir" ]] || continue
+        for sub in "${candidates[@]}"; do
+            [[ -d "$userdir$sub" ]] || continue
+            while IFS= read -r name; do
+                [[ " ${noise[*]} " == *" $name "* ]] && continue
+                [[ " ${found[*]} " == *" $name "* ]] || found+=("$name")
+            done < <(find "$userdir$sub" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null)
+        done
+    done
+
+    if [[ ${#found[@]} -gt 0 ]]; then
+        printf '%s\n' "${found[@]}"
+        return
+    fi
+
+    # Tier 2: no save/config data yet (fresh or crashed-before-first-save
+    # prefix) — fall back to the exe path Hydra actually launched this
+    # WINEPREFIX with, per its own umu.log. Steam prefixes never appear in
+    # this log (Steam doesn't launch through Hydra's umu-run), so this is a
+    # no-op for them and they fall through to the raw-appid label same as
+    # before.
+    local umu_log="$HOME/.config/hydralauncher/logs/umu.log" exe_line exe_path
+    if [[ -f "$umu_log" ]]; then
+        exe_line=$(grep -F "WINEPREFIX='$prefix'" "$umu_log" 2>/dev/null | tail -1)
+        if [[ -n "$exe_line" ]]; then
+            exe_path=$(grep -o "'[^']*'" <<<"$exe_line" | tail -1 | tr -d "'")
+            [[ -n "$exe_path" ]] && basename "$(dirname "$exe_path")" && return
+        fi
+    fi
+
+    echo "(nothing found)"
 }
 
 #--[Status Line]-----------------------------------------------------------------
@@ -420,6 +878,33 @@ kettle_status_line() {
     printf '%s%s %s%s\n' "$style" "$mark" "$name" "$reset"
 }
 
+# Longest string in an array (by nameref) — column width for aligned listings.
+kettle_max_len() {
+    local -n _kml_arr="$1"
+    local s max=0
+    for s in "${_kml_arr[@]}"; do
+        (( ${#s} > max )) && max=${#s}
+    done
+    printf '%s' "$max"
+}
+
+# One aligned listing row: mark, primary text (already colored if needed),
+# primary's *visible* length (so ANSI codes don't skew padding), column
+# width from kettle_max_len, and an optional dim suffix (e.g. size, alias).
+kettle_status_line_aligned() {
+    local mark="$1" primary="$2" plen="$3" width="$4" suffix="${5:-}"
+    if [[ -z "$suffix" ]]; then
+        kettle_status_line "$mark" "$primary"
+        return
+    fi
+    local dim="" reset="" pad=$(( width - plen ))
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+        dim=$'\033[2m'
+        reset=$'\033[0m'
+    fi
+    kettle_status_line "$mark" "$(printf '%s%*s %s%s%s' "$primary" "$pad" "" "$dim" "$suffix" "$reset")"
+}
+
 # Print effective offload/mangohud state for one custom game slug
 print_settings() {
     local slug="$1" offload mangohud
@@ -431,6 +916,18 @@ print_settings() {
 
 #--[Subcommands]---------------------------------------------------------------
 
+# Self-healing: every invocation re-syncs the prefix gallery before doing
+# anything else, same pattern as list_custom_games() -> prune_custom_games().
+# Skipped for help so --help stays instant with no filesystem side effects.
+case "${1:-}" in
+    help|-h|--help) ;;
+    *)
+        sync_prefix_pointers
+        sync_steam_prefixes
+        sync_hydra_prefixes
+        ;;
+esac
+
 case "${1:-}" in
     help|-h|--help)
         cat <<'EOF'
@@ -439,11 +936,27 @@ kettle - Steam game launcher with auto-generated wrapper scripts
 Usage: kettle [command] [args]
 
 Commands:
-  (none)                      Launch Steam
+  (none)                      List available games and refresh wrappers
+  steam                       Launch Steam
   big, bigpicture              Launch Steam in Big Picture mode
-  ls, list                     List available games (Steam + custom)
+  ls, list                     List available games and refresh wrappers
+  prefixes                     Sync and list every wine prefix (source-qualified, with size)
+  prefix rm <source>_<name>    Trash a prefix's real directory (gio trash, confirms first)
+  inspect <path>                Discover what a wine prefix is for (saves/config)
   kill, stop <game>            Kill a running game by slug/initials
-  add [title] [exe]            Register a sideloaded (non-Steam) game
+  run <exe> [args...]          Launch an exe via umu-run/Proton without
+                                registering it (no wrapper, no registry entry)
+  add <exe> [-n name] [-p prefix]  Register a sideloaded (non-Steam) game;
+                                    -n/--name sets the title (prompts if
+                                    omitted), -p/--prefix reuses an existing
+                                    prefix (gallery label or literal path)
+                                    instead of creating a new one
+  edit <slug>                   Edit name/executable/prefix for a custom game
+                                 in $EDITOR (prefix accepts a gallery label or
+                                 a literal path, see 'kettle prefixes')
+  rm, remove <slug>             Unregister a custom game (registry entry +
+                                 generated wrapper only — never touches the
+                                 prefix directory or executable)
   set <slug> <key> <on|off>    Set mangohud/offload for a custom game (custom
                                 games only — Steam-library games are launched
                                 inside Steam's own container and can't be
@@ -453,21 +966,105 @@ Commands:
   help, -h, --help             Show this help
 EOF
         ;;
-    ls|list)
-        echo ""
-        echo "Available games:"
+    ""|ls|list)
+        init_wrappers
+        ls_slugs=() ls_aliases=()
         while IFS='|' read -r appid name; do
             initials=$(get_initials "$name")
             slug=$(get_slug "$name")
-            if [[ -n "$initials" ]]; then
-                echo "  $slug ($initials)"
-            else
-                echo "  $slug"
-            fi
+            ls_slugs+=("$slug")
+            ls_aliases+=("${initials:+($initials)}")
         done < <(list_games)
         while IFS='|' read -r slug _title _exe; do
-            echo "  $slug"
+            ls_slugs+=("$slug")
+            ls_aliases+=("")
         done < <(list_custom_games)
+        ls_width=$(kettle_max_len ls_slugs)
+        for i in "${!ls_slugs[@]}"; do
+            kettle_status_line_aligned + "${ls_slugs[$i]}" "${#ls_slugs[$i]}" "$ls_width" "${ls_aliases[$i]}"
+        done
+        ;;
+    prefixes|prefix)
+        case "${2:-}" in
+            rm|remove)
+                target="${3:-}"
+                if [[ -z "$target" ]]; then
+                    echo "Usage: kettle prefix rm <source>_<name>" >&2
+                    exit 1
+                fi
+                resolved=$(resolve_gallery_prefix "$target") || exit 1
+                label="$target"
+                if [[ ! -d "$resolved/drive_c" ]]; then
+                    echo "Error: not a wine prefix (no drive_c): $resolved" >&2
+                    exit 1
+                fi
+                if [[ "$resolved" != "$CUSTOM_PREFIX_DIR"/* && \
+                      "$resolved" != "$HOME/Games/Heroic/Prefixes"/* && \
+                      "$resolved" != "$HOME/Games/umu"/* && \
+                      "$resolved" != "$HYDRA_PREFIX_DIR"/* && \
+                      "$resolved" != "$STEAM_ROOT/steamapps/compatdata"/* ]]; then
+                    echo "Error: refusing to delete outside known prefix roots: $resolved" >&2
+                    exit 1
+                fi
+                size=$(du -sh "$resolved" 2>/dev/null | cut -f1)
+                echo "About to trash: $label"
+                echo "  $resolved ($size)"
+                read -r -p "Delete? [y/N] " reply < /dev/tty
+                if [[ "$reply" =~ ^[Yy]$ ]]; then
+                    if command -v gio &>/dev/null; then
+                        gio trash -- "$resolved"
+                    else
+                        echo "Warning: gio not found, falling back to permanent rm -rf" >&2
+                        rm -rf -- "$resolved"
+                    fi
+                fi
+                ;;
+            "")
+                list_prefix_gallery
+                ;;
+            *)
+                echo "Usage: kettle prefix [rm <source>_<name>]" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    inspect)
+        prefix="${2:-}"
+        if [[ -z "$prefix" ]]; then
+            echo "Usage: kettle inspect <path-to-prefix>" >&2
+            exit 1
+        fi
+        inspect_prefix "$prefix"
+        ;;
+    run)
+        exe="${2:-}"
+        if [[ -z "$exe" ]]; then
+            echo "Usage: kettle run <path/to/exe> [args...]" >&2
+            exit 1
+        fi
+        exe="${exe/#\~/$HOME}"
+        exe=$(realpath -m -- "$exe")
+        if [[ ! -f "$exe" ]]; then
+            echo "Error: executable not found: $exe" >&2
+            exit 1
+        fi
+        check_deps "${RUN_DEPS[@]}"
+        if [[ -z "$PROTON_PATH" ]]; then
+            echo "Error: no Proton build found under $STEAM_ROOT (checked compatibilitytools.d and steamapps/common)" >&2
+            exit 1
+        fi
+        mkdir -p "$RUN_PREFIX"
+        export WINEPREFIX="$RUN_PREFIX"
+        export GAMEID="${GAMEID:-umu-default}"
+        export PROTONPATH="${PROTONPATH:-$PROTON_PATH}"
+        shift 2
+        _working_dir=$(dirname -- "$exe")
+        _exe_name=$(basename -- "$exe")
+        if ! cd -- "$_working_dir"; then
+            echo "Error: could not set working directory: $_working_dir" >&2
+            exit 1
+        fi
+        exec umu-run "./$_exe_name" "$@"
         ;;
     kill|stop)
         game="${2:-}"
@@ -507,7 +1104,44 @@ EOF
         fi
         ;;
     add)
-        title="${2:-}"
+        shift
+        exe="" title="" prefix_target="" prefix_path=""
+        gallery_entries=() source_="" target_name="" real="" reuse="" pick="" entry="" i=0
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --name|-n)
+                    title="${2:-}"
+                    [[ $# -ge 2 ]] || { echo "Error: $1 requires a value" >&2; exit 1; }
+                    shift 2
+                    ;;
+                --prefix|-p)
+                    prefix_target="${2:-}"
+                    [[ $# -ge 2 ]] || { echo "Error: $1 requires a value" >&2; exit 1; }
+                    shift 2
+                    ;;
+                -*)
+                    echo "Error: unknown flag '$1' (see 'kettle help')" >&2
+                    exit 1
+                    ;;
+                *)
+                    if [[ -n "$exe" ]]; then
+                        echo "Error: unexpected argument '$1'" >&2
+                        exit 1
+                    fi
+                    exe="$1"
+                    shift
+                    ;;
+            esac
+        done
+        if [[ -z "$exe" ]]; then
+            read -rp "Path to executable: " exe
+        fi
+        if [[ -z "$exe" ]]; then
+            echo "Error: executable path required" >&2
+            exit 1
+        fi
+        exe="${exe/#\~/$HOME}"
+        exe=$(realpath -m -- "$exe")
         if [[ -z "$title" ]]; then
             read -rp "Game name: " title
         fi
@@ -515,13 +1149,33 @@ EOF
             echo "Error: game name required" >&2
             exit 1
         fi
-        exe="${3:-}"
-        if [[ -z "$exe" ]]; then
-            read -rp "Path to executable: " exe
+        title=$(normalize_title "$title")
+        if [[ -n "$prefix_target" ]]; then
+            prefix_path=$(resolve_prefix_input "$prefix_target") || exit 1
+        else
+            gallery_entries=()
+            while IFS=$'\t' read -r source_ target_name real; do
+                [[ -n "$real" ]] || continue
+                gallery_entries+=("$(gallery_label "$source_" "$target_name")|$real")
+            done < <(walk_prefix_gallery)
+            if [[ ${#gallery_entries[@]} -gt 0 ]]; then
+                read -r -p "Reuse an existing prefix? [y/N] " reuse < /dev/tty
+                if [[ "$reuse" =~ ^[Yy]$ ]]; then
+                    i=1
+                    for entry in "${gallery_entries[@]}"; do
+                        echo "  $i) ${entry%%|*}"
+                        ((i++))
+                    done
+                    read -r -p "Pick a number: " pick < /dev/tty
+                    if [[ ! "$pick" =~ ^[0-9]+$ ]] || (( pick < 1 || pick > ${#gallery_entries[@]} )); then
+                        echo "Error: invalid selection" >&2
+                        exit 1
+                    fi
+                    prefix_path="${gallery_entries[$((pick - 1))]#*|}"
+                fi
+            fi
         fi
-        exe="${exe/#\~/$HOME}"
-        exe=$(realpath -m -- "$exe")
-        add_custom_game "$title" "$exe"
+        add_custom_game "$title" "$exe" "$prefix_path"
         ;;
     set)
         slug="${2:-}" key="${3:-}" value="${4:-}"
@@ -549,6 +1203,144 @@ EOF
         create_custom_wrapper "$slug" "$exe" "$custom_prefix"
         kettle_status_line "$([[ "$normalized" == 1 ]] && echo + || echo -)" "$key:$slug"
         ;;
+    edit)
+        slug="${2:-}"
+        if [[ -z "$slug" ]]; then
+            echo "Usage: kettle edit <slug>" >&2
+            exit 1
+        fi
+        if ! full_entry=$(get_custom_game_full "$slug") || [[ -z "$full_entry" ]]; then
+            echo "Error: '$slug' is not a registered custom game." >&2
+            exit 1
+        fi
+        old_title="${full_entry%%|*}"
+        old_rest="${full_entry#*|}"
+        old_exe="${old_rest%%|*}"
+        old_prefix="${old_rest#*|}"
+        old_prefix_display=$(gallery_label_for_path "$old_prefix")
+
+        tmpfile=$(mktemp)
+        trap 'rm -f "$tmpfile"' EXIT
+        original_content=$'name='"$old_title"$'\n''executable-path='"$old_exe"$'\n''prefix='"$old_prefix_display"
+        printf '%s\n' "$original_content" > "$tmpfile"
+
+        "${EDITOR:-vi}" "$tmpfile" < /dev/tty > /dev/tty 2>&1
+
+        if [[ "$(cat "$tmpfile")" == "$original_content" ]]; then
+            echo "No changes made."
+            exit 0
+        fi
+
+        new_title="" new_exe="" new_prefix=""
+        while IFS='=' read -r key value; do
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            case "$key" in
+                name) new_title="$value" ;;
+                executable-path) new_exe="$value" ;;
+                prefix) new_prefix="$value" ;;
+            esac
+        done < "$tmpfile"
+
+        if [[ -z "$new_title" ]]; then
+            echo "Error: name is required" >&2
+            exit 1
+        fi
+        if [[ -z "$new_exe" ]]; then
+            echo "Error: executable-path is required" >&2
+            exit 1
+        fi
+        new_exe="${new_exe/#\~/$HOME}"
+        new_exe=$(realpath -m -- "$new_exe")
+        if [[ ! -f "$new_exe" ]]; then
+            echo "Error: executable not found: $new_exe" >&2
+            exit 1
+        fi
+        if [[ -z "$new_prefix" ]]; then
+            echo "Error: prefix is required" >&2
+            exit 1
+        fi
+        if ! resolved_prefix=$(resolve_prefix_input "$new_prefix"); then
+            exit 1
+        fi
+
+        new_title=$(normalize_title "$new_title")
+        new_slug=$(get_slug "$new_title")
+        if [[ -z "$new_slug" ]]; then
+            echo "Error: could not derive a slug from name: $new_title" >&2
+            exit 1
+        fi
+
+        if [[ "$new_slug" != "$slug" ]]; then
+            if existing=$(get_custom_game "$new_slug") && [[ -n "$existing" ]]; then
+                echo "Error: a custom game with slug '$new_slug' already exists" >&2
+                exit 1
+            fi
+            init_settings_registry
+            old_settings_entry=$(jq -r --arg k "$slug" '.[$k] // empty' "$SETTINGS_REGISTRY" 2>/dev/null)
+            if [[ -n "$old_settings_entry" ]]; then
+                if jq --arg old "$slug" --arg new "$new_slug" \
+                    '.[$new] = .[$old] | del(.[$old])' \
+                    "$SETTINGS_REGISTRY" > "$SETTINGS_REGISTRY.tmp"; then
+                    mv "$SETTINGS_REGISTRY.tmp" "$SETTINGS_REGISTRY"
+                else
+                    rm -f "$SETTINGS_REGISTRY.tmp"
+                fi
+            fi
+            rm -f "$CUSTOM_WRAPPER_DIR/$slug" "$SYMLINK_DIR/$slug"
+            if ! jq --arg old "$slug" --arg new "$new_slug" \
+                --arg title "$new_title" --arg exe "$new_exe" --arg prefix "$resolved_prefix" \
+                '.[$new] = {title: $title, executable: $exe, prefix: $prefix} | del(.[$old])' \
+                "$CUSTOM_REGISTRY" > "$CUSTOM_REGISTRY.tmp"; then
+                echo "Error: failed to update registry $CUSTOM_REGISTRY" >&2
+                rm -f "$CUSTOM_REGISTRY.tmp"
+                exit 1
+            fi
+            mv "$CUSTOM_REGISTRY.tmp" "$CUSTOM_REGISTRY"
+            create_custom_wrapper "$new_slug" "$new_exe" "$resolved_prefix"
+            kettle_status_line x "$slug"
+            kettle_status_line + "$new_slug"
+        else
+            if ! jq --arg k "$slug" --arg title "$new_title" --arg exe "$new_exe" --arg prefix "$resolved_prefix" \
+                '.[$k] = {title: $title, executable: $exe, prefix: $prefix}' \
+                "$CUSTOM_REGISTRY" > "$CUSTOM_REGISTRY.tmp"; then
+                echo "Error: failed to update registry $CUSTOM_REGISTRY" >&2
+                rm -f "$CUSTOM_REGISTRY.tmp"
+                exit 1
+            fi
+            mv "$CUSTOM_REGISTRY.tmp" "$CUSTOM_REGISTRY"
+            create_custom_wrapper "$slug" "$new_exe" "$resolved_prefix"
+            kettle_status_line + "$slug"
+        fi
+        ;;
+    rm|remove)
+        slug="${2:-}"
+        if [[ -z "$slug" ]]; then
+            echo "Usage: kettle rm <slug>" >&2
+            exit 1
+        fi
+        if ! custom_entry=$(get_custom_game "$slug") || [[ -z "$custom_entry" ]]; then
+            echo "Error: '$slug' is not a registered custom game." >&2
+            exit 1
+        fi
+        rm -f "$CUSTOM_WRAPPER_DIR/$slug" "$SYMLINK_DIR/$slug"
+        if jq --arg k "$slug" 'del(.[$k])' "$CUSTOM_REGISTRY" > "$CUSTOM_REGISTRY.tmp"; then
+            mv "$CUSTOM_REGISTRY.tmp" "$CUSTOM_REGISTRY"
+        else
+            rm -f "$CUSTOM_REGISTRY.tmp"
+        fi
+        init_settings_registry
+        if setting_entry=$(jq -r --arg k "$slug" '.[$k] // empty' "$SETTINGS_REGISTRY" 2>/dev/null) && [[ -n "$setting_entry" ]]; then
+            if jq --arg k "$slug" 'del(.[$k])' "$SETTINGS_REGISTRY" > "$SETTINGS_REGISTRY.tmp"; then
+                mv "$SETTINGS_REGISTRY.tmp" "$SETTINGS_REGISTRY"
+            else
+                rm -f "$SETTINGS_REGISTRY.tmp"
+            fi
+        fi
+        kettle_status_line x "$slug"
+        ;;
     status)
         slug="${2:-}"
         if [[ -n "$slug" ]]; then
@@ -567,8 +1359,12 @@ EOF
         init_wrappers
         exec gamemoderun steam -tenfoot
         ;;
-    *)
+    steam)
         init_wrappers
         exec gamemoderun steam
+        ;;
+    *)
+        echo "Error: unknown command '$1' (see 'kettle help')" >&2
+        exit 1
         ;;
 esac

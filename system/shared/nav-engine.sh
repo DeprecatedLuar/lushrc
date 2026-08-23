@@ -18,6 +18,10 @@ done
 
 query="$1"
 
+# Trash is not an XDG user-dir variable. Allow an explicit local override,
+# then use the freedesktop default beneath XDG_DATA_HOME.
+TRASH_DIR="${XDG_TRASH_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/Trash}"
+
 # Debug helper - write to stderr (portable, works in all environments)
 debug() {
     [[ "$DEBUG" == true ]] && printf "\033[2m[nav] %s\033[0m\n" "$*" >&2
@@ -81,6 +85,7 @@ expand_index() {
         lb/*)  echo "$HOME/.local/bin/${1#lb/}" ;;
         d/*)   echo "$HOME/Downloads/${1#d/}" ;;
         doc/*) echo "$DOCUMENTS/${1#doc/}" ;;
+        trash/*) echo "$TRASH_DIR/${1#trash/}" ;;
         med/*|m/*|media/*) echo "${MEDIA:-$HOME/Media}/${1#*/}" ;;
         pic/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures/${1#pic/}" ;;
         vid/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos/${1#vid/}" ;;
@@ -112,6 +117,7 @@ expand_index() {
         lb)    echo "$HOME/.local/bin" ;;
         d)     echo "$HOME/Downloads" ;;
         doc)   echo "$DOCUMENTS" ;;
+        trash) echo "$TRASH_DIR" ;;
         med|m|media) echo "${MEDIA:-$HOME/Media}" ;;
         pic)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures" ;;
         vid)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos" ;;

@@ -187,17 +187,21 @@ bigbrother_edit_buffer() {
     bigbrother_discard_draft "$mode" "$name"
 }
 
-# Prints "+ name" (enabled/added), "~ name" (transient, live), a dim "- name"
-# (disabled), or a strikethrough "x name" (removed) — mark is one of + ~ - x.
-# Shared by `ls` and the add/run/enable/disable/rm command feedback so they all
-# agree on what each marker means. Styling is TTY-only; the ASCII mark itself
-# always stays so piped/logged output remains distinguishable and greppable.
+# Prints "* name" (transient, live), "~ name" (stored, running on demand),
+# "+ name" (enabled, live), "! name" (enabled, stopped by hand), "= name"
+# (foreign unit pulled in by something else), a dim "- name" (stored, idle),
+# or a strikethrough "x name" (removed) — mark is one of * ~ + ! = - x.
+# Shared by `ls` and the add/run/stop/enable/disable/rm command feedback so
+# they all agree on what each marker means. Styling is TTY-only; the ASCII
+# mark itself always stays so piped/logged output remains distinguishable
+# and greppable.
 bigbrother_status_line() {
     local mark="$1" name="$2" style="" reset=""
 
-    # + and ~ both mean "this is up", so neither is dimmed.
+    # Anything currently up (or "!" flagging an anomaly worth seeing) stays
+    # undimmed; only idle/removed states get muted styling.
     case "$mark" in
-        +|'~') printf '%s %s\n' "$mark" "$name"; return ;;
+        '*'|'~'|+|'='|'!') printf '%s %s\n' "$mark" "$name"; return ;;
     esac
 
     if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
@@ -205,6 +209,83 @@ bigbrother_status_line() {
         [[ "$mark" == x ]] && style=$'\033[2m\033[9m' || style=$'\033[2m'
     fi
     printf '%s%s %s%s\n' "$style" "$mark" "$name" "$reset"
+}
+
+# Encodes the mark table in one place: transient/filestate/active -> mark.
+# Pure function, no systemd calls, so this is exhaustively unit-testable.
+# `filestate` is systemd's UnitFileState (enabled, enabled-runtime, disabled,
+# linked, linked-runtime, static, indirect, generated, alias, masked, ...).
+bigbrother_mark_for() {
+    local transient="$1" filestate="$2" active="$3" running=false
+
+    [[ "$active" == active || "$active" == activating || "$active" == reloading ]] && running=true
+
+    if [[ "$transient" == yes ]]; then
+        printf '*'
+        return
+    fi
+
+    case "$filestate" in
+        enabled|enabled-runtime)
+            $running && printf '+' || printf '!'
+            ;;
+        disabled)
+            $running && printf '~' || printf '-'
+            ;;
+        *)
+            # linked, linked-runtime, static, indirect, generated, alias,
+            # masked, or unknown: not enablable, so only liveness matters.
+            $running && printf '=' || printf '-'
+            ;;
+    esac
+}
+
+# Single-name convenience over the batched probe, for `get`'s output.
+bigbrother_mark() {
+    local scope="${2:-user}" line
+    line=$(bigbrother_probe_units "$scope" "$1")
+    [[ -n "$line" ]] || return 1
+    local transient filestate active
+    IFS=$'\t' read -r _ transient filestate active <<< "$line"
+    bigbrother_mark_for "$transient" "$filestate" "$active"
+}
+
+# Probes every name in one batched call and emits "mark<TAB>name" pairs,
+# ready for bigbrother_print_ordered.
+bigbrother_marks_for_names() {
+    local scope="$1"
+    shift
+    (($# == 0)) && return 0
+
+    local name transient filestate active
+    while IFS=$'\t' read -r name transient filestate active; do
+        printf '%s\t%s\n' "$(bigbrother_mark_for "$transient" "$filestate" "$active")" "$name"
+    done < <(bigbrother_probe_units "$scope" "$@")
+}
+
+# Buckets a name/mark stream (one "mark<TAB>name" pair per line on stdin)
+# into the fixed listing order and prints through bigbrother_status_line:
+# * transient, ~ running on demand, + enabled+live, ! enabled+down,
+# = foreign/pulled-in, - stored+idle. Shared by bigbrother_ls_owned and
+# bigbrother_ls_scope so every listing agrees on ordering.
+bigbrother_print_ordered() {
+    local order=('*' '~' '+' '!' '=' '-')
+    local -A buckets=()
+    local mark name
+
+    while IFS=$'\t' read -r mark name; do
+        [[ -z "$mark" ]] && continue
+        buckets["$mark"]+="$name"$'\n'
+    done
+
+    local m n
+    for m in "${order[@]}"; do
+        [[ -n "${buckets[$m]:-}" ]] || continue
+        while IFS= read -r n; do
+            [[ -z "$n" ]] && continue
+            bigbrother_status_line "$m" "$n"
+        done <<< "${buckets[$m]}"
+    done
 }
 
 # Dim section header, TTY-only styling like bigbrother_status_line. Only
@@ -227,6 +308,7 @@ bigbrother_cmd_get() {
         local running="stopped"
         bigbrother_is_running "$name" && running="running"
         printf "name     %s\n" "$name"
+        printf "mark     %s\n" "$(bigbrother_mark "$name")"
         printf "type     transient\n"
         printf "status   %s\n" "$running"
         printf "command  %s\n" "$(bigbrother_exec_start_command "$name" 2>/dev/null)"
@@ -241,67 +323,52 @@ bigbrother_cmd_get() {
     bigbrother_is_running "$name" && running="running"
 
     printf "name     %s\n" "$name"
+    printf "mark     %s\n" "$(bigbrother_mark "$name")"
     printf "status   %s / %s\n" "$enabled" "$running"
     printf "command  %s\n" "$(bigbrother_exec_start_command "$name" 2>/dev/null)"
     printf "workdir  %s\n" "$(bigbrother_working_directory "$name" 2>/dev/null)"
     printf "unit     %s\n" "$(bigbrother_unit_path "$name")"
 }
 
+# A live transient shadows any on-disk file of the same name, so the two
+# sources are merged into one set before probing — same name from both
+# never gets listed twice, and its mark reflects the live (transient) state.
 bigbrother_ls_owned() {
-    local name found=false
-    local -a enabled_names=() disabled_names=() transient_names=()
+    local -A names=()
+    local name
 
     while IFS= read -r name; do
         [[ -z "$name" ]] && continue
-        found=true
-        if bigbrother_is_enabled "$name"; then
-            enabled_names+=("$name")
-        else
-            disabled_names+=("$name")
-        fi
+        names["$name"]=1
     done < <(bigbrother_defined_names)
 
     while IFS= read -r name; do
         [[ -z "$name" ]] && continue
-        found=true
-        transient_names+=("$name")
+        names["$name"]=1
     done < <(bigbrother_transient_names)
 
-    $found || { echo "No services."; return 0; }
+    ((${#names[@]} > 0)) || { echo "No services."; return 0; }
 
-    local n
-    for n in "${transient_names[@]}"; do bigbrother_status_line '~' "$n"; done
-    for n in "${enabled_names[@]}"; do bigbrother_status_line + "$n"; done
-    for n in "${disabled_names[@]}"; do bigbrother_status_line - "$n"; done
+    bigbrother_marks_for_names user "${!names[@]}" | bigbrother_print_ordered
 }
 
 # Lists every *running* unit in a scope, read-only — these are not bb-owned,
-# so only + (up) and, for user scope, ~ (transient) ever apply; a stopped unit
-# never appears here. System scope skips the transient probe entirely: it
-# would cost one extra `systemctl show` per unit to distinguish a state
-# bigbrother cannot act on anyway (see design doc on read-only /etc/systemd).
+# so only marks reachable while running ever apply: * (transient), ~ (running
+# on demand), + (enabled), = (pulled in by something else). ! and - never
+# appear here, since a stopped unit never appears in this listing at all.
 bigbrother_ls_scope() {
-    local scope="$1" name found=false
-    local -A transient_set=()
-
-    if [[ "$scope" == user ]]; then
-        while IFS= read -r name; do
-            [[ -z "$name" ]] && continue
-            transient_set["$name"]=1
-        done < <(bigbrother_transient_names)
-    fi
+    local scope="$1"
+    local -a names=()
+    local name
 
     while IFS= read -r name; do
         [[ -z "$name" ]] && continue
-        found=true
-        if [[ -n "${transient_set[$name]:-}" ]]; then
-            bigbrother_status_line '~' "$name"
-        else
-            bigbrother_status_line + "$name"
-        fi
+        names+=("$name")
     done < <(bigbrother_running_names "$scope")
 
-    $found || echo "No running $scope services."
+    ((${#names[@]} > 0)) || { echo "No running $scope services."; return 0; }
+
+    bigbrother_marks_for_names "$scope" "${names[@]}" | bigbrother_print_ordered
 }
 
 bigbrother_cmd_ls() {
@@ -436,7 +503,6 @@ bigbrother_add_verified() {
     }
 
     bigbrother_enable_now "$name" || return 1
-    bigbrother_status_line + "$name"
 }
 
 # Opens the editor draft, then writes + enables + starts the result.
@@ -463,7 +529,6 @@ bigbrother_finalize_add() {
     bigbrother_write_unit_body "$name" "$BB_RESULT_BODY" || return 1
     bigbrother_daemon_reload
     bigbrother_enable_now "$name" || return 1
-    bigbrother_status_line + "$name"
 }
 
 bigbrother_cmd_rm() {
@@ -482,7 +547,6 @@ bigbrother_cmd_rm() {
             return 1
         }
         bigbrother_reset_failed "$name"
-        bigbrother_status_line x "$name"
         return 0
     fi
 
@@ -501,7 +565,6 @@ bigbrother_cmd_rm() {
 
     bigbrother_delete_unit "$name"
     bigbrother_daemon_reload
-    bigbrother_status_line x "$name"
 }
 
 bigbrother_cmd_enable() {
@@ -519,7 +582,6 @@ bigbrother_cmd_enable() {
     fi
 
     bigbrother_enable_now "$name" || return 1
-    bigbrother_status_line + "$name"
 }
 
 bigbrother_cmd_disable() {
@@ -527,9 +589,13 @@ bigbrother_cmd_disable() {
     [[ -z "$name" ]] && { echo "Usage: bigbrother disable <name>" >&2; return 1; }
     bigbrother_is_defined "$name" || { echo "bigbrother: '$name' is not defined" >&2; return 1; }
     bigbrother_disable_now "$name"
-    bigbrother_status_line - "$name"
 }
 
+# Gates on *running*, never on *enabled* — an enabled-but-stopped service is
+# exactly the case `run` should start, since there is deliberately no
+# separate `start` verb (see bigbrother_cmd_stop). Already-live is a no-op
+# success, not an error: `run` means "make it live", so finding it live
+# already isn't a failure.
 bigbrother_cmd_run() {
     bigbrother_parse_launch_args command "$@" || return 1
     ((${#BB_ARG_COMMAND[@]} > 0)) || {
@@ -545,9 +611,9 @@ bigbrother_cmd_run() {
     if ((${#BB_ARG_COMMAND[@]} == 1)) && [[ -z "$BB_ARG_NAME" ]] &&
         bigbrother_is_defined "${BB_ARG_COMMAND[0]}"; then
         local defined="${BB_ARG_COMMAND[0]}"
+        bigbrother_is_running "$defined" && return 0
         bigbrother_start "$defined" || return 1
         bigbrother_verify_launch "$defined" || return 1
-        [[ "$BB_LAUNCH_STATE" == running ]] && bigbrother_status_line + "$defined"
         return 0
     fi
 
@@ -567,22 +633,42 @@ bigbrother_cmd_run() {
     fi
 
     bigbrother_launch_transient "$name" "${BB_ARG_WORKDIR:-$PWD}" "${BB_ARG_COMMAND[@]}" || return 1
-    [[ "$BB_LAUNCH_STATE" == running ]] && bigbrother_status_line '~' "$name"
     return 0
 }
 
+# Never touches enablement — stopping an enabled service just takes it down
+# for now; it still comes back at boot (`bb ls` marks that '!'). Stopping a
+# transient destroys it for good, since it has no unit file to fall back to.
 bigbrother_cmd_stop() {
     local name="${1:-}"
     [[ -z "$name" ]] && { echo "Usage: bigbrother stop <name>" >&2; return 1; }
-    bigbrother_stop "$name"
-    echo "bigbrother: stopped '$name'"
+
+    if ! bigbrother_is_defined "$name"; then
+        bigbrother_is_transient "$name" 2>/dev/null || {
+            echo "bigbrother: '$name' is not defined" >&2
+            return 1
+        }
+        bigbrother_stop "$name" || return 1
+        bigbrother_wait_stopped "$name" || {
+            echo "bigbrother: '$name' did not stop" >&2
+            return 1
+        }
+        bigbrother_reset_failed "$name"
+        return 0
+    fi
+
+    bigbrother_stop "$name" || return 1
+    bigbrother_wait_stopped "$name" || {
+        echo "bigbrother: '$name' did not stop" >&2
+        return 1
+    }
+    bigbrother_reset_failed "$name"
 }
 
 bigbrother_cmd_restart() {
     local name="${1:-}"
     [[ -z "$name" ]] && { echo "Usage: bigbrother restart <name>" >&2; return 1; }
     bigbrother_restart "$name"
-    echo "bigbrother: restarted '$name'"
 }
 
 bigbrother_cmd_logs() {
@@ -632,10 +718,8 @@ bigbrother_cmd_edit() {
 
     if [[ "$new_name" != "$name" ]]; then
         bigbrother_rename_unit "$name" "$new_name" || return 1
-        echo "bigbrother: updated and renamed '$name' to '$new_name'"
     else
         bigbrother_daemon_reload
-        echo "bigbrother: updated '$name'"
     fi
 }
 
@@ -647,7 +731,6 @@ bigbrother_cmd_mv() {
     [[ "$old" == "$new" ]] && { echo "bigbrother: '$old' and '$new' are the same" >&2; return 1; }
 
     bigbrother_rename_unit "$old" "$new" || return 1
-    echo "bigbrother: renamed '$old' to '$new'"
 }
 
 bigbrother_cmd_help() {
@@ -658,19 +741,23 @@ Usage: bigbrother [command]
 Bare shortcuts:
     bb <name>               Watch a running service's live output
 
-Markers:
-    + enabled   ~ transient (live)   - disabled   x removed
+Markers (persistence and liveness are independent; ls always prints in this order):
+    * transient, live        ~ stored, running on demand      + enabled, live
+    ! enabled, stopped       = foreign unit pulled in (--user/--root only)
+    - stored, idle           x removed (action feedback only, never a listing state)
 
 Commands:
     ls, list                List all services
     ls, list --user          List every running systemd --user service (read-only, not just bb's)
     ls, list --root          List every running system service (read-only; --system also works)
     ls, list --all            Both, in sections. Never prompts for sudo: listing is unprivileged.
-    get, g <name>            Show details (status, command, workdir, unit path) for one service
+    get, g <name>            Show details (mark, status, command, workdir, unit path) for one service
     run [-n <name>] <cmd> [args...]
                               Run now as a transient unit and confirm it survived. Names itself
                               after the binary, appending .1/.2 when taken; -n names it outright.
-                              A lone already-defined name instead just starts that service.
+                              A lone already-defined name instead starts that service if it isn't
+                              already live (enabled-but-stopped included — there is no separate
+                              start command). Already running is a silent no-op.
     add, a <name> -c <cmd> [args...]
                               run + enable: runs <cmd> transiently first and only persists it
                               if it survives. The saved command is read back off the unit that
@@ -681,7 +768,8 @@ Commands:
     mv, rename <old> <new>   Rename a defined service, preserving its enabled/active state
     enable, up <name>        Enable + start; promotes a transient of that name first
     disable, down <name>     Disable + stop (definition kept)
-    stop <name>               Stop now (stays defined)
+    stop <name>               Stop now; never touches enablement. An enabled service just goes
+                              down for now (still comes back at boot); a transient is destroyed.
     restart <name>
     watch, tail, attach <name>  Live view of the process output (same as `bb <name>`)
     logs <name> [-f] [--raw]  Past output; -f follows, --raw adds journald timestamps
@@ -690,6 +778,9 @@ Commands:
 
 Both run and add take --workdir <dir>; the default is the directory you invoke from,
 not wherever the binary happens to live. A path is just a command: pass it to -c.
+
+Mutating commands are silent on success; errors go to stderr. ls/get/logs/watch are
+the commands that produce output by design.
 
 All operations are systemd --user (no sudo).
 EOF

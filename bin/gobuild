@@ -2,11 +2,12 @@
 # gobuild - portable go build: static (CGO_ENABLED=0), stripped, cross-arch aware
 #
 # Usage:
-#   gobuild [root] [arch] [-o output]
+#   gobuild [root] [target] [arch] [-o output]
 #
 #   root    path to the go project root (default: .)
 #           package to build is auto-resolved under it, see below
-#   arch    amd64 | arm64 (default: native GOARCH)
+#   target  linux | android (default: linux)
+#   arch    amd64 | 386 | arm64 (x86 is an alias for 386; default: native GOARCH)
 #   -o      output binary path (default: <root>/bin/<name>, else <root>/../bin/<name>, else <root>/<name>)
 #
 # Package resolution under <root>:
@@ -20,8 +21,10 @@
 set -euo pipefail
 
 root="."
+target="linux"
 arch="$(go env GOARCH)"
 output=""
+variant_specified=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -29,8 +32,30 @@ while [[ $# -gt 0 ]]; do
             output="$2"
             shift 2
             ;;
-        amd64|arm64)
-            arch="$1"
+        linux|android)
+            target="$1"
+            variant_specified=true
+            shift
+            ;;
+        termux)
+            target="android"
+            arch="arm64"
+            variant_specified=true
+            shift
+            ;;
+        amd64|x86_64)
+            arch="amd64"
+            variant_specified=true
+            shift
+            ;;
+        386|x86)
+            arch="386"
+            variant_specified=true
+            shift
+            ;;
+        arm64|aarch64)
+            arch="arm64"
+            variant_specified=true
             shift
             ;;
         *)
@@ -92,7 +117,16 @@ if [[ -z "$output" ]]; then
     else
         bindir="$root"
     fi
-    output="$bindir/$pkgname"
+    if [[ "$variant_specified" == true ]]; then
+        if [[ "$target" == "android" ]]; then
+            suffix="android-$arch"
+        else
+            suffix="$arch"
+        fi
+        output="$bindir/$pkgname-$suffix"
+    else
+        output="$bindir/$pkgname"
+    fi
 fi
 
 # go.mod is looked up from the process's cwd, not from the package path, so
@@ -118,5 +152,10 @@ mkdir -p "$(dirname "$output")"
 outdir="$(cd "$(dirname "$output")" && pwd)"
 absoutput="$outdir/$(basename "$output")"
 
-echo "gobuild: GOARCH=$arch pkg=$pkgrel (root=$modroot) -o $absoutput" >&2
-CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go -C "$modroot" build -ldflags="-s -w" -o "$absoutput" "$pkgrel"
+buildmode=()
+if [[ "$target" == "android" ]]; then
+    buildmode=(-buildmode=pie)
+fi
+
+echo "gobuild: GOOS=$target GOARCH=$arch pkg=$pkgrel (root=$modroot) -o $absoutput" >&2
+CGO_ENABLED=0 GOOS="$target" GOARCH="$arch" go -C "$modroot" build "${buildmode[@]}" -ldflags="-s -w" -o "$absoutput" "$pkgrel"

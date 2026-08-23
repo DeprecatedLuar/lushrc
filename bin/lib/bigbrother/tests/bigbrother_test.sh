@@ -176,30 +176,57 @@ assert_file_contains() {
     assert_equals "4" "$(wc -l < "$unit")" "no-description unit line count"
     assert_file_contains "$unit" "ExecStart=/bin/true"
 
-    # ls --user/--root/--all: stub what the scope listing depends on
+    # bigbrother_mark_for: exhaustive truth table, no systemd involved
+    assert_equals "*" "$(bigbrother_mark_for yes enabled active)" "transient wins over everything"
+    assert_equals "*" "$(bigbrother_mark_for yes disabled inactive)" "transient wins even when down"
+    assert_equals "+" "$(bigbrother_mark_for no enabled active)" "enabled + active"
+    assert_equals "+" "$(bigbrother_mark_for no enabled-runtime activating)" "enabled-runtime + activating counts live"
+    assert_equals "!" "$(bigbrother_mark_for no enabled inactive)" "enabled + down"
+    assert_equals "!" "$(bigbrother_mark_for no enabled failed)" "enabled + failed is still down"
+    assert_equals "~" "$(bigbrother_mark_for no disabled active)" "disabled + active"
+    assert_equals "-" "$(bigbrother_mark_for no disabled inactive)" "disabled + down"
+    assert_equals "=" "$(bigbrother_mark_for no linked active)" "linked + active"
+    assert_equals "=" "$(bigbrother_mark_for no linked-runtime active)" "linked-runtime + active"
+    assert_equals "=" "$(bigbrother_mark_for no static active)" "static + active"
+    assert_equals "=" "$(bigbrother_mark_for no indirect active)" "indirect + active"
+    assert_equals "-" "$(bigbrother_mark_for no static inactive)" "not-enablable + down falls back to -"
+
+    # ls --user/--root/--all: stub the batched probe, not per-name predicates,
+    # since bigbrother_ls_owned/scope now go through bigbrother_probe_units.
     bigbrother_running_names() {
         [[ "$1" == user ]] && printf 'pipewire\nagentctl\n' || printf 'NetworkManager\n'
     }
     bigbrother_transient_names() { printf 'agentctl\n'; }
+    bigbrother_probe_units() {
+        local scope="$1"; shift
+        local n
+        for n in "$@"; do
+            case "$n" in
+                agentctl)       printf 'agentctl\tyes\t\tactive\n' ;;
+                pipewire)       printf 'pipewire\tno\tenabled\tactive\n' ;;
+                NetworkManager) printf 'NetworkManager\tno\tenabled\tactive\n' ;;
+            esac
+        done
+    }
 
     out=$(bigbrother_cmd_ls --user)
-    assert_contains "$out" "~ agentctl" "ls --user marks transient with ~"
-    assert_contains "$out" "+ pipewire" "ls --user marks non-transient with +"
+    assert_contains "$out" "* agentctl" "ls --user marks transient with *"
+    assert_contains "$out" "+ pipewire" "ls --user marks enabled+live with +"
     if [[ "$out" == *"user"$'\n'* ]]; then
         fail "ls --user printed a section header for a single scope: $out"
     fi
 
     out=$(bigbrother_cmd_ls --root)
     assert_contains "$out" "+ NetworkManager" "ls --root lists system units"
-    if [[ "$out" == *"~"* ]]; then
-        fail "ls --root should never mark ~ (no transient probe at system scope): $out"
+    if [[ "$out" == *"*"* ]]; then
+        fail "ls --root should not mark a non-transient unit '*': $out"
     fi
 
     out_all=$(bigbrother_cmd_ls --all)
     assert_contains "$out_all" "user" "ls --all prints the user header"
     assert_contains "$out_all" "system" "ls --all prints the system header"
     assert_contains "$out_all" "+ NetworkManager" "ls --all includes system units"
-    assert_contains "$out_all" "~ agentctl" "ls --all includes user units"
+    assert_contains "$out_all" "* agentctl" "ls --all includes user units"
 
     out_union=$(bigbrother_cmd_ls --user --root)
     assert_equals "$out_all" "$out_union" "ls --user --root equals ls --all"
@@ -268,12 +295,12 @@ bb rm "$service" >/dev/null || fail "rm failed"
 [[ ! -e "$(unit_file "$service")" ]] || fail "rm kept the unit file"
 assert_equals "inactive" "$(active_state "$service")" "state after rm"
 
-# --- run: derived names step aside instead of colliding
+# --- run: derived names step aside instead of colliding, silently
 bb run "$TEST_PREFIX" >/dev/null || fail "first run failed"
 assert_equals "active" "$(active_state "$TEST_PREFIX")" "first run state"
 run_output=$(bb run "$TEST_PREFIX")
-assert_contains "$run_output" "~ $TEST_PREFIX.1" "second run auto-suffixed"
-assert_equals "active" "$(active_state "$TEST_PREFIX.1")" "second run state"
+assert_equals "" "$run_output" "run produces no output on success"
+assert_equals "active" "$(active_state "$TEST_PREFIX.1")" "second run auto-suffixed and active"
 
 # --- rm: a transient has no file, but must still be removable
 bb rm "$TEST_PREFIX.1" >/dev/null || fail "rm of a transient failed"
@@ -330,6 +357,68 @@ if bb enable "./$TEST_PREFIX" >/dev/null 2>&1; then
     fail "enable accepted a bare path"
 fi
 
+mark_of() { bb get "$1" | awk '/^mark /{print $2}'; }
+
+# --- full mark lifecycle on one service: every mutating command is silent,
+# and stop never touches enablement (enabled+stopped is still enabled)
+service="$TEST_PREFIX-lifecycle"
+add_output=$(cd "$TEST_ROOT" && bb add "$service" -c "$TEST_PREFIX")
+assert_equals "" "$add_output" "add produces no output on success"
+assert_equals "+" "$(mark_of "$service")" "add leaves an enabled+live service"
+
+stop_output=$(bb stop "$service")
+assert_equals "" "$stop_output" "stop produces no output on success"
+assert_equals "!" "$(mark_of "$service")" "stop on an enabled service goes to enabled+down, not disabled"
+assert_equals "inactive" "$(active_state "$service")" "stop actually stopped the process"
+
+run_output=$(bb run "$service")
+assert_equals "" "$run_output" "run produces no output on success"
+assert_equals "+" "$(mark_of "$service")" "run on an enabled+down service starts it back up"
+
+# run on an already-live service is a silent no-op, not an error
+rerun_output=$(bb run "$service")
+rerun_status=$?
+assert_equals "" "$rerun_output" "run on an already-live service is silent"
+assert_equals "0" "$rerun_status" "run on an already-live service exits 0"
+
+bb disable "$service" >/dev/null || fail "disable failed"
+assert_equals "-" "$(mark_of "$service")" "disable leaves a disabled+idle service"
+
+bb run "$service" >/dev/null || fail "run of a disabled service failed"
+assert_equals "~" "$(mark_of "$service")" "run on a disabled service marks it running-on-demand"
+
+bb stop "$service" >/dev/null || fail "stop failed"
+assert_equals "-" "$(mark_of "$service")" "stop on an on-demand service returns it to disabled+idle"
+
+bb rm "$service" >/dev/null || fail "rm of lifecycle service failed"
+
+# --- stop: a transient is destroyed for good, not just paused
+bb run -n "$TEST_PREFIX-transient" "$TEST_PREFIX" >/dev/null || fail "transient run failed"
+assert_equals "*" "$(mark_of "$TEST_PREFIX-transient")" "a bare-command run is a true transient"
+bb stop "$TEST_PREFIX-transient" >/dev/null || fail "stop of transient failed"
+assert_equals "inactive" "$(active_state "$TEST_PREFIX-transient")" "transient is gone after stop"
+
+# --- stop: an unknown name is refused, not silently accepted
+if bb stop "$TEST_PREFIX-does-not-exist" >/dev/null 2>&1; then
+    fail "stop accepted an undefined name"
+fi
+
+# --- ls ordering: transient, running-on-demand, and enabled must never interleave
+bb add "$TEST_PREFIX-ord-a" -c "$TEST_PREFIX" >/dev/null || fail "ord-a add failed"
+bb add "$TEST_PREFIX-ord-b" -c "$TEST_PREFIX" >/dev/null || fail "ord-b add failed"
+bb disable "$TEST_PREFIX-ord-b" >/dev/null || fail "ord-b disable failed"
+bb run "$TEST_PREFIX-ord-b" >/dev/null || fail "ord-b run-on-demand failed"
+bb run -n "$TEST_PREFIX-ord-c" "$TEST_PREFIX" >/dev/null || fail "ord-c transient run failed"
+
+# Filter to just these three names, then the mark column alone must read
+# *, ~, + top to bottom — the fixed listing order for those three states.
+order_marks=$(bb ls | grep " $TEST_PREFIX-ord-" | awk '{print $1}')
+assert_equals "$(printf '*\n~\n+')" "$order_marks" "ord services print in */~/+ order, never interleaved"
+
+bb stop "$TEST_PREFIX-ord-c" >/dev/null || true
+bb rm "$TEST_PREFIX-ord-a" >/dev/null || fail "ord-a rm failed"
+bb rm "$TEST_PREFIX-ord-b" >/dev/null || fail "ord-b rm failed"
+
 
 # --- ls --root: read-only, unprivileged, shape not specific names (the
 # host's running system services will differ across machines)
@@ -337,7 +426,8 @@ root_output=$(bb ls --root) || fail "ls --root failed"
 [[ -n "$root_output" ]] || fail "ls --root produced no output"
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^[+~]\  ]] || fail "ls --root line has an unexpected mark: $line"
+    # Only marks reachable while running: * ~ + = (never ! or -, which require "stopped")
+    [[ "$line" =~ ^[*~+=]\  ]] || fail "ls --root line has an unexpected mark: $line"
 done <<< "$root_output"
 
 # --- ls --all: both scope headers present

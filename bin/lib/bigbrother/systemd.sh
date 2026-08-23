@@ -14,7 +14,6 @@ bigbrother_ensure_linger() {
     [[ "$state" == "yes" ]] && return 0
 
     if loginctl enable-linger "$USER" 2>/dev/null; then
-        echo "bigbrother: enabled linger for $USER (services now survive logout)"
         return 0
     fi
 
@@ -65,6 +64,43 @@ bigbrother_running_names() {
         awk '{print $1}' | while IFS= read -r unit; do
             printf '%s\n' "${unit%.service}"
         done
+}
+
+# Batched state probe behind every mark computation. `systemctl show` accepts
+# many units per call and answers with one blank-line-separated block per
+# unit, so a whole listing costs one systemctl invocation instead of one per
+# unit — the cost systemctl-per-name would have had to pay was the reason
+# system-scope marks used to stay flat (see bigbrother_ls_scope). Property
+# order within a block is not guaranteed to match the order requested on the
+# command line, so each line is parsed by its key, not by position.
+#
+# Emits one TSV line per unit: name <TAB> transient <TAB> filestate <TAB> active
+bigbrother_probe_units() {
+    local scope="$1" flag
+    shift
+    (($# > 0)) || return 0
+    [[ "$scope" == user ]] && flag=--user || flag=--system
+
+    local -a units=()
+    local name
+    for name in "$@"; do units+=("$name.service"); done
+
+    systemctl "$flag" show -p Id -p Transient -p UnitFileState -p ActiveState \
+        "${units[@]}" 2>/dev/null |
+        awk -F= '
+            BEGIN { id = ""; transient = ""; filestate = ""; active = "" }
+            /^Id=/          { id = $2; sub(/\.service$/, "", id) }
+            /^Transient=/   { transient = $2 }
+            /^UnitFileState=/ { filestate = $2 }
+            /^ActiveState=/ { active = $2 }
+            /^$/ {
+                if (id != "") print id "\t" transient "\t" filestate "\t" active
+                id = ""; transient = ""; filestate = ""; active = ""
+            }
+            END {
+                if (id != "") print id "\t" transient "\t" filestate "\t" active
+            }
+        '
 }
 
 bigbrother_run_transient() {
