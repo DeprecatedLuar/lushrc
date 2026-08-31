@@ -376,7 +376,8 @@ Schedules:
 Job file fields:
   name              Creation drafts only. Becomes <name>.job and is not stored.
   every             Required schedule using one of the forms above.
-  time              Required for day, Nd, weekday, and ordinal schedules.
+  time              Required for day, Nd, weekday, and ordinal schedules;
+                    comma-separated for multiple times (for example 14:00,15:00).
   anchor            Managed automatically for Nd and Nh schedules. Do not add it.
   command           Required Bash command.
 

@@ -57,6 +57,12 @@ assert_contains "$XDG_CONFIG_HOME/cronotrigger/.enabled" daily
 assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "0 9 * * *"
 assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "# cronotrigger:daily"
 
+"$CRONOTRIGGER" add multi-time \
+    --every day --time 14:00,15:00 --command true >/dev/null
+assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "0 14 * * *"
+assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "0 15 * * *"
+assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "# cronotrigger:multi-time"
+
 "$CRONOTRIGGER" add monthly \
     --every 1st,15th --time 10:30 --command 'printf monthly' >/dev/null
 assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "30 10 1,15 * *"
@@ -81,6 +87,16 @@ export CRONOTRIGGER_NOW="2026-08-12T08:00"
 "$CRONOTRIGGER" add weekdays \
     --every mon,wed,fri --time 09:05 --command true >/dev/null
 assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "5 9 * * 1,3,5"
+
+"$CRONOTRIGGER" add multi-day-time \
+    --every mon,wed,fri --time 14:00,15:00 --command true >/dev/null
+assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "0 14 * * 1,3,5"
+assert_contains "$CRONOTRIGGER_TEST_CRONTAB" "0 15 * * 1,3,5"
+
+if "$CRONOTRIGGER" add duplicate-time \
+    --every day --time 14:00,14:00 --command true >/dev/null 2>&1; then
+    fail "duplicate times were accepted"
+fi
 
 "$CRONOTRIGGER" add hourly \
     --every 6h \

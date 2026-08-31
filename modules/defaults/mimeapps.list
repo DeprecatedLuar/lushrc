@@ -245,3 +245,4 @@ image/tiff=swayimg.desktop
 image/gif=swayimg.desktop
 image/jpg=swayimg.desktop
 x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+x-scheme-handler/jackify=com.jackify.app.desktop

@@ -23,7 +23,7 @@ cronotrigger_cron_command() {
 }
 
 cronotrigger_build_entries() {
-    local name path command
+    local name path command cron_spec
 
     while IFS= read -r name; do
         cronotrigger_validate_name "$name" >/dev/null 2>&1 || {
@@ -43,7 +43,9 @@ cronotrigger_build_entries() {
         }
 
         command="$(cronotrigger_cron_command "$name")"
-        printf '%s %s # cronotrigger:%s\n' "$CRON_SPEC" "$command" "$name"
+        for cron_spec in "${CRON_SPECS[@]}"; do
+            printf '%s %s # cronotrigger:%s\n' "$cron_spec" "$command" "$name"
+        done
     done < <(cronotrigger_job_names)
 }
 

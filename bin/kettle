@@ -34,9 +34,12 @@ SETTINGS_REGISTRY="$HOME/.local/share/kettle/settings.json"
 # writes through the gallery. Sources whose own directories are already keyed by
 # human-readable names get one static pointer; Steam and Hydra are enumerated
 # because both are keyed by numeric ID (appid / hydra objectId).
+GAMES_SAVES_DIR="$HOME/Games/saves"
+GAMES_LIBRARY_DIR="$HOME/Games/library"
 PREFIX_GALLERY="$HOME/Games/prefixes"
 PREFIX_STEAM_DIR="$PREFIX_GALLERY/steam"
 PREFIX_HYDRA_DIR="$PREFIX_GALLERY/hydra"
+RUNNERS_DIR="${RUNNERS_DIR:-$HOME/Games/runners}"
 PREFIX_SOURCES=(
     "heroic:$HOME/Games/Heroic/Prefixes/default"
     "umu:$HOME/Games/umu"
@@ -323,9 +326,43 @@ init_custom_registry() {
     [[ -f "$CUSTOM_REGISTRY" ]] || echo '{}' > "$CUSTOM_REGISTRY"
 }
 
+# Normalize directory names under Games/library (e.g. "Hollow Knight" -> "hollow-knight")
+# and update any matching executable paths in custom_games.json before pruning
+clean_game_library() {
+    [[ -d "$GAMES_LIBRARY_DIR" ]] || return 0
+    local dir name slug old_path new_path
+    for dir in "$GAMES_LIBRARY_DIR"/*/; do
+        [[ -d "$dir" ]] || continue
+        name=$(basename "${dir%/}")
+        slug=$(get_slug "$name")
+        [[ -z "$slug" || "$name" == "$slug" ]] && continue
+
+        old_path="$GAMES_LIBRARY_DIR/$name"
+        new_path="$GAMES_LIBRARY_DIR/$slug"
+
+        if [[ -e "$new_path" ]]; then
+            echo "Warning: cannot rename $old_path to $new_path (target already exists)" >&2
+            continue
+        fi
+
+        if mv -- "$old_path" "$new_path"; then
+            if [[ -f "$CUSTOM_REGISTRY" ]]; then
+                if jq --arg old "$old_path" --arg new "$new_path" \
+                    'map_values(if .executable and ((.executable == $old) or (.executable | startswith($old + "/"))) then .executable = ($new + (.executable | ltrimstr($old))) else . end)' \
+                    "$CUSTOM_REGISTRY" > "$CUSTOM_REGISTRY.tmp" 2>/dev/null; then
+                    mv "$CUSTOM_REGISTRY.tmp" "$CUSTOM_REGISTRY"
+                else
+                    rm -f "$CUSTOM_REGISTRY.tmp"
+                fi
+            fi
+        fi
+    done
+}
+
 # Remove custom game entries whose executable no longer exists on disk
 # (self-healing: nothing else notices when a sideloaded game is deleted)
 prune_custom_games() {
+    clean_game_library
     init_custom_registry
     local slug _title exe stale=()
     while IFS='|' read -r slug _title exe; do
@@ -527,7 +564,7 @@ add_custom_game() {
 # the new link INSIDE that directory instead of replacing it. Sources that don't
 # exist on this machine (e.g. no Heroic installed) are skipped, not errored.
 sync_prefix_pointers() {
-    mkdir -p "$PREFIX_GALLERY"
+    mkdir -p "$GAMES_SAVES_DIR" "$GAMES_LIBRARY_DIR" "$PREFIX_GALLERY"
     local entry name target
     for entry in "${PREFIX_SOURCES[@]}"; do
         name="${entry%%:*}"
@@ -861,6 +898,303 @@ inspect_prefix() {
     echo "(nothing found)"
 }
 
+#--[Runners Registry]-----------------------------------------------------------
+
+# Check if a value exists in an array
+kettle_in_array() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
+# Check if a directory or binary qualifies as a valid Proton/Wine compatibility runner
+is_valid_runner() {
+    local path="$1"
+    [[ -e "$path" ]] || return 1
+
+    # Single binary executable (e.g. system wine)
+    if [[ -f "$path" && -x "$path" ]]; then
+        local base
+        base=$(basename "$path")
+        [[ "$base" == "wine" || "$base" == "wine64" ]] && return 0
+        return 1
+    fi
+
+    [[ -d "$path" ]] || return 1
+
+    # Proton-style runner markers
+    [[ -x "$path/proton" ]] && return 0
+    [[ -f "$path/compatibilitytool.vdf" ]] && return 0
+    [[ -x "$path/files/bin/wine" || -x "$path/files/bin/wine64" ]] && return 0
+
+    # Wine-style runner markers
+    [[ -x "$path/bin/wine" || -x "$path/bin/wine64" ]] && return 0
+
+    return 1
+}
+
+# Discover compatibility tools and Proton installations from Steam
+discover_steam_runners() {
+    local roots=() dirs=() r d lib vdf path pfx
+    roots+=(
+        "${STEAM_ROOT:-}"
+        "$HOME/.local/share/Steam"
+        "$HOME/.steam/root"
+        "$HOME/.steam/steam"
+        "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"
+    )
+    dirs+=(
+        "/usr/share/steam/compatibilitytools.d"
+        "/usr/local/share/steam/compatibilitytools.d"
+    )
+    if [[ -n "${STEAM_EXTRA_COMPAT_TOOLS_PATHS:-}" ]]; then
+        local extra_paths=()
+        IFS=':' read -ra extra_paths <<< "$STEAM_EXTRA_COMPAT_TOOLS_PATHS"
+        for pfx in "${extra_paths[@]}"; do
+            [[ -n "$pfx" ]] && dirs+=("$pfx")
+        done
+    fi
+    for r in "${roots[@]}"; do
+        [[ -n "$r" && -d "$r/compatibilitytools.d" ]] && dirs+=("$r/compatibilitytools.d")
+    done
+
+    # Compatibility tools (compatibilitytools.d)
+    local tool
+    for d in "${dirs[@]}"; do
+        [[ -d "$d" ]] || continue
+        for tool in "$d"/*; do
+            [[ -e "$tool" ]] || continue
+            is_valid_runner "$tool" && echo "$tool"
+        done
+    done
+
+    # Discover Steam library folders for Valve Proton
+    local libraries=()
+    [[ -n "${STEAM_ROOT:-}" && -d "${STEAM_ROOT:-}" ]] && libraries+=("$STEAM_ROOT")
+    for r in "${roots[@]}"; do
+        [[ -n "$r" && -d "$r" ]] || continue
+        for vdf in "$r/steamapps/libraryfolders.vdf" "$r/config/config.vdf"; do
+            [[ -f "$vdf" ]] || continue
+            while IFS= read -r path; do
+                [[ -d "$path" ]] && libraries+=("$path")
+            done < <(grep -oP '"path"\s*"\K[^"]+' "$vdf" 2>/dev/null || sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$vdf" 2>/dev/null)
+        done
+    done
+
+    local lib_seen=() pdir
+    for lib in "${libraries[@]}"; do
+        local real_lib
+        real_lib=$(realpath -m -- "$lib" 2>/dev/null) || real_lib="$lib"
+        [[ " ${lib_seen[*]} " == *" $real_lib "* ]] && continue
+        lib_seen+=("$real_lib")
+
+        for pdir in "$lib/steamapps/common"/Proton* "$lib/steamapps/common"/proton*; do
+            [[ -e "$pdir" ]] || continue
+            is_valid_runner "$pdir" && echo "$pdir"
+        done
+    done
+}
+
+# Discover Heroic Wine/Proton runners
+discover_heroic_runners() {
+    local search_dirs=(
+        "$HOME/.config/heroic/tools/proton"
+        "$HOME/.config/heroic/tools/wine"
+        "$HOME/.var/app/com.heroicgameslauncher.hgl/config/heroic/tools/proton"
+        "$HOME/.var/app/com.heroicgameslauncher.hgl/config/heroic/tools/wine"
+    )
+    local d r
+    for d in "${search_dirs[@]}"; do
+        [[ -d "$d" ]] || continue
+        for r in "$d"/*; do
+            [[ -e "$r" ]] || continue
+            is_valid_runner "$r" && echo "$r"
+        done
+    done
+}
+
+# Discover Lutris runners
+discover_lutris_runners() {
+    local search_dirs=(
+        "$HOME/.local/share/lutris/runners/wine"
+        "$HOME/.var/app/net.lutris.Lutris/data/lutris/runners/wine"
+    )
+    local d r
+    for d in "${search_dirs[@]}"; do
+        [[ -d "$d" ]] || continue
+        for r in "$d"/*; do
+            [[ -e "$r" ]] || continue
+            is_valid_runner "$r" && echo "$r"
+        done
+    done
+}
+
+# Discover Bottles runners
+discover_bottles_runners() {
+    local search_dirs=(
+        "$HOME/.local/share/bottles/runners"
+        "$HOME/.var/app/com.usebottles.bottles/data/bottles/runners"
+    )
+    local d r
+    for d in "${search_dirs[@]}"; do
+        [[ -d "$d" ]] || continue
+        for r in "$d"/*; do
+            [[ -e "$r" ]] || continue
+            is_valid_runner "$r" && echo "$r"
+        done
+    done
+}
+
+# Discover system Wine binary
+discover_system_runners() {
+    local wine_bin
+    wine_bin=$(command -v wine 2>/dev/null) || return 0
+    if [[ -n "$wine_bin" && -x "$wine_bin" ]]; then
+        is_valid_runner "$wine_bin" && echo "$wine_bin"
+    fi
+}
+
+# Discover Nix-managed runners (without scanning /nix/store)
+discover_nix_runners() {
+    local profiles=() p
+    if [[ -n "${NIX_PROFILES:-}" ]]; then
+        read -ra profiles <<< "$NIX_PROFILES"
+    fi
+    profiles+=(
+        "$HOME/.nix-profile"
+        "/run/current-system/sw"
+        "/etc/profiles/per-user/$USER"
+        "/nix/var/nix/profiles/default"
+    )
+    local seen_p=() d r
+    for p in "${profiles[@]}"; do
+        [[ -d "$p" ]] || continue
+        local rp
+        rp=$(realpath -m -- "$p" 2>/dev/null) || rp="$p"
+        [[ " ${seen_p[*]} " == *" $rp "* ]] && continue
+        seen_p+=("$rp")
+
+        for d in "$p/share/steam/compatibilitytools.d" "$p/share/compatibilitytools.d"; do
+            [[ -d "$d" ]] || continue
+            for r in "$d"/*; do
+                [[ -e "$r" ]] || continue
+                is_valid_runner "$r" && echo "$r"
+            done
+        done
+    done
+}
+
+# Synchronize symlinks for a single runner provider
+sync_provider_runners() {
+    local provider="$1"
+    local provider_dir="$RUNNERS_DIR/$provider"
+
+    # custom directory is reserved for manual/external integration
+    if [[ "$provider" == "custom" ]]; then
+        if [[ -d "$provider_dir" ]]; then
+            rmdir "$provider_dir" 2>/dev/null || true
+        fi
+        return 0
+    fi
+
+    local discover_fn="discover_${provider}_runners"
+    declare -F "$discover_fn" >/dev/null || return 0
+
+    local raw_targets=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && raw_targets+=("$line")
+    done < <("$discover_fn")
+
+    local real_seen=() unique_targets=() t real_t
+    for t in "${raw_targets[@]}"; do
+        real_t=$(realpath -m -- "$t" 2>/dev/null) || real_t="$t"
+        [[ " ${real_seen[*]} " == *" $real_t "* ]] && continue
+        real_seen+=("$real_t")
+        unique_targets+=("$t")
+    done
+
+    # If no runners discovered, prune stale links if dir exists and remove if empty
+    if [[ ${#unique_targets[@]} -eq 0 ]]; then
+        if [[ -d "$provider_dir" ]]; then
+            local link
+            for link in "$provider_dir"/*; do
+                [[ -L "$link" ]] && rm -f "$link"
+            done
+            rmdir "$provider_dir" 2>/dev/null || true
+        fi
+        return 0
+    fi
+
+    mkdir -p "$provider_dir"
+
+    local wanted_links=() base link_name n
+    for t in "${unique_targets[@]}"; do
+        real_t=$(realpath -m -- "$t" 2>/dev/null) || real_t="$t"
+        base=$(basename "$t")
+        link_name="$base"
+        n=1
+        while kettle_in_array "$link_name" "${wanted_links[@]}"; do
+            link_name="$base ($n)"
+            ((n++))
+        done
+        wanted_links+=("$link_name")
+        ensure_wrapper_symlink "$real_t" "$provider_dir/$link_name"
+    done
+
+    # Remove stale Kettle-created symlinks
+    local link base_link
+    for link in "$provider_dir"/*; do
+        [[ -L "$link" ]] || continue
+        base_link=$(basename "$link")
+        if ! kettle_in_array "$base_link" "${wanted_links[@]}"; then
+            rm -f "$link"
+        fi
+    done
+
+    # Remove provider directory if left empty
+    rmdir "$provider_dir" 2>/dev/null || true
+}
+
+# Synchronize all runner providers
+sync_all_runners() {
+    mkdir -p "$RUNNERS_DIR"
+    local p
+    for p in steam heroic lutris bottles nix system custom; do
+        sync_provider_runners "$p"
+    done
+}
+
+# List all discovered compatibility runners grouped by provider
+list_runners() {
+    sync_all_runners
+    local p dir link items first=1 has_any=0
+    for p in steam heroic lutris bottles nix system custom; do
+        dir="$RUNNERS_DIR/$p"
+        [[ -d "$dir" ]] || continue
+        items=()
+        for link in "$dir"/*; do
+            [[ -e "$link" || -L "$link" ]] || continue
+            items+=("$(basename "$link")")
+        done
+        if [[ ${#items[@]} -gt 0 ]]; then
+            has_any=1
+            [[ $first -eq 0 ]] && echo ""
+            first=0
+            echo "$p:"
+            for item in "${items[@]}"; do
+                echo "  $item"
+            done
+        fi
+    done
+    if [[ $has_any -eq 0 ]]; then
+        echo "No compatibility runners discovered."
+    fi
+}
+
 #--[Status Line]-----------------------------------------------------------------
 
 # +=enabled, dim -=disabled. TTY-only styling; the mark itself always prints
@@ -925,6 +1259,8 @@ case "${1:-}" in
         sync_prefix_pointers
         sync_steam_prefixes
         sync_hydra_prefixes
+        clean_game_library
+        sync_all_runners
         ;;
 esac
 
@@ -942,6 +1278,7 @@ Commands:
   ls, list                     List available games and refresh wrappers
   prefixes                     Sync and list every wine prefix (source-qualified, with size)
   prefix rm <source>_<name>    Trash a prefix's real directory (gio trash, confirms first)
+  runners [list|refresh]       Sync and list compatibility runners index (~/Games/runners)
   inspect <path>                Discover what a wine prefix is for (saves/config)
   kill, stop <game>            Kill a running game by slug/initials
   run <exe> [args...]          Launch an exe via umu-run/Proton without
@@ -1024,6 +1361,20 @@ EOF
                 ;;
             *)
                 echo "Usage: kettle prefix [rm <source>_<name>]" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    runners|runner)
+        case "${2:-}" in
+            refresh|sync)
+                sync_all_runners
+                ;;
+            ""|ls|list)
+                list_runners
+                ;;
+            *)
+                echo "Usage: kettle runners [list|refresh]" >&2
                 exit 1
                 ;;
         esac

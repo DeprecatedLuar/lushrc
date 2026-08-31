@@ -4,10 +4,6 @@ BIGBROTHER_UNIT_DIR="${BIGBROTHER_UNIT_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/sy
 BIGBROTHER_RUNTIME_DIR="${BIGBROTHER_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/bigbrother-${UID}}}"
 BIGBROTHER_DRAFT_DIR="$BIGBROTHER_RUNTIME_DIR/drafts"
 
-# Under systemd a service's stdout is a journald pipe, not a TTY, so programs
-# disable their own color. journald itself stores and replays ANSI bytes
-# untouched — these are the widely-honored opt-ins that turn color back on.
-#
 # PATH is set explicitly rather than left to the systemd --user manager's own
 # environment: systemd-run only inherits the manager's ambient env plus
 # --setenv, never the invoking shell's. On a machine where nothing ever
@@ -16,7 +12,7 @@ BIGBROTHER_DRAFT_DIR="$BIGBROTHER_RUNTIME_DIR/drafts"
 # manager's near-empty PATH and 203/EXECs. Carrying the launching shell's own
 # PATH here makes resolution machine-independent instead of depending on
 # ambient state.
-BIGBROTHER_SERVICE_ENV=(FORCE_COLOR=1 CLICOLOR_FORCE=1 PY_COLORS=1 "PATH=$PATH")
+BIGBROTHER_SERVICE_ENV=("PATH=$PATH")
 
 # /run/systemd/system only exists when systemd is actually PID 1 — the
 # canonical check, since `command -v systemctl` can pass under other inits.

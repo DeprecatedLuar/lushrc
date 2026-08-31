@@ -16,6 +16,33 @@ cronotrigger_parse_time() {
     SCHEDULE_MINUTE="${BASH_REMATCH[2]}"
 }
 
+cronotrigger_parse_times() {
+    local value="$1" time token
+    local -a times=()
+
+    IFS=',' read -r -a times <<< "$value"
+    ((${#times[@]} > 0)) || {
+        echo "cronotrigger: time is required" >&2
+        return 1
+    }
+
+    SCHEDULE_TIMES=()
+    for token in "${times[@]}"; do
+        token="${token//[[:space:]]/}"
+        [[ -n "$token" ]] || {
+            echo "cronotrigger: time '$value' contains an empty value" >&2
+            return 1
+        }
+        cronotrigger_parse_time "$token" || return 1
+        time="$token"
+        [[ " ${SCHEDULE_TIMES[*]} " != *" $time "* ]] || {
+            echo "cronotrigger: duplicate time '$time'" >&2
+            return 1
+        }
+        SCHEDULE_TIMES+=("$time")
+    done
+}
+
 cronotrigger_ordinal_number() {
     local token="$1" number suffix expected
 
@@ -46,6 +73,8 @@ cronotrigger_parse_schedule() {
     SCHEDULE_CRON_DAYS=""
     SCHEDULE_HOUR=""
     SCHEDULE_MINUTE=""
+    SCHEDULE_TIMES=()
+    SCHEDULE_FIRST_TIME=""
     every="${JOB_EVERY,,}"
     every="${every//[[:space:]]/}"
 
@@ -146,7 +175,13 @@ cronotrigger_parse_schedule() {
                 echo "cronotrigger: time is required with '$JOB_EVERY'" >&2
                 return 1
             }
-            cronotrigger_parse_time "$JOB_TIME" || return 1
+            cronotrigger_parse_times "$JOB_TIME" || return 1
+            SCHEDULE_FIRST_TIME="${SCHEDULE_TIMES[0]}"
+            for token in "${SCHEDULE_TIMES[@]}"; do
+                [[ "$token" < "$SCHEDULE_FIRST_TIME" ]] && SCHEDULE_FIRST_TIME="$token"
+            done
+            SCHEDULE_HOUR="${SCHEDULE_FIRST_TIME%%:*}"
+            SCHEDULE_MINUTE="${SCHEDULE_FIRST_TIME#*:}"
             ;;
     esac
 }
@@ -187,7 +222,7 @@ cronotrigger_date_add() {
 }
 
 cronotrigger_generate_anchor() {
-    local now today now_time first_date
+    local now today now_time first_date latest_time token
 
     now="$(cronotrigger_now)"
     [[ "$now" =~ $CRONOTRIGGER_ANCHOR_PATTERN ]] || {
@@ -199,12 +234,16 @@ cronotrigger_generate_anchor() {
         day_interval)
             today="${now%%T*}"
             now_time="${now#*T}"
-            if [[ "$now_time" < "$JOB_TIME" ]]; then
+            latest_time="${SCHEDULE_TIMES[0]}"
+            for token in "${SCHEDULE_TIMES[@]}"; do
+                [[ "$token" > "$latest_time" ]] && latest_time="$token"
+            done
+            if [[ "$now_time" < "$latest_time" ]]; then
                 first_date="$today"
             else
                 first_date="$(cronotrigger_date_add "$today" 1 day)" || return 1
             fi
-            JOB_ANCHOR="${first_date}T${JOB_TIME}"
+            JOB_ANCHOR="${first_date}T${SCHEDULE_FIRST_TIME}"
             ;;
         hour_interval)
             JOB_ANCHOR="$(cronotrigger_date_add "$now" "$SCHEDULE_INTERVAL" hour)" || return 1
@@ -265,20 +304,29 @@ cronotrigger_finalize_job() {
 }
 
 cronotrigger_compile_schedule() {
+    local time
+
     cronotrigger_parse_schedule || return 1
+    CRON_SPECS=()
 
     case "$SCHEDULE_MODE" in
         day|day_interval)
-            CRON_SPEC="$((10#$SCHEDULE_MINUTE)) $((10#$SCHEDULE_HOUR)) * * *"
+            for time in "${SCHEDULE_TIMES[@]}"; do
+                CRON_SPECS+=("$((10#${time#*:})) $((10#${time%%:*})) * * *")
+            done
             ;;
         weekdays)
-            CRON_SPEC="$((10#$SCHEDULE_MINUTE)) $((10#$SCHEDULE_HOUR)) * * $SCHEDULE_CRON_DAYS"
+            for time in "${SCHEDULE_TIMES[@]}"; do
+                CRON_SPECS+=("$((10#${time#*:})) $((10#${time%%:*})) * * $SCHEDULE_CRON_DAYS")
+            done
             ;;
         month_days)
-            CRON_SPEC="$((10#$SCHEDULE_MINUTE)) $((10#$SCHEDULE_HOUR)) $SCHEDULE_CRON_DAYS * *"
+            for time in "${SCHEDULE_TIMES[@]}"; do
+                CRON_SPECS+=("$((10#${time#*:})) $((10#${time%%:*})) $SCHEDULE_CRON_DAYS * *")
+            done
             ;;
         hour_interval)
-            CRON_SPEC="$((10#${JOB_ANCHOR:14:2})) * * * *"
+            CRON_SPECS+=("$((10#${JOB_ANCHOR:14:2})) * * * *")
             ;;
     esac
 }

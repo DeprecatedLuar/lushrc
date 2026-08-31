@@ -4,6 +4,9 @@
 #
 # Depends on: REAL_SSH (array), expand_local_ip (net.sh) — both set up by bin/lsh
 # before this is called.
+# shared: spinner.sh
+
+source "$SYSDIR/shared/spinner.sh"
 
 _lsh_tunnel_port_in_use() {
     (: < "/dev/tcp/127.0.0.1/$1") &>/dev/null
@@ -30,7 +33,7 @@ lsh_tunnel() {
         HOST="${prefix}${expanded}"
     fi
 
-    local -a FWD=()
+    local -a FWD=() LOCAL_PORTS=() REMOTE_PORTS=()
     local spec local_port remote_port
     IFS=',' read -ra SPECS <<< "$SPEC_LIST"
     for spec in "${SPECS[@]}"; do
@@ -53,11 +56,29 @@ lsh_tunnel() {
         fi
 
         FWD+=(-L "${local_port}:localhost:${remote_port}")
+        LOCAL_PORTS+=("$local_port")
+        REMOTE_PORTS+=("$remote_port")
     done
 
+    local i
+    echo >&2
+    for i in "${!LOCAL_PORTS[@]}"; do
+        printf 'localhost:%s → %s:%s\n' "${LOCAL_PORTS[$i]}" "$HOST" "${REMOTE_PORTS[$i]}" >&2
+    done
+
+    # -o ControlMaster=no/ControlPath=none: never piggyback on a shared
+    # connection. A tunnel must own its process so it actually blocks (or
+    # backgrounds) on its own — reusing a master's socket would let the
+    # master silently own the forward instead, making -N/-fN return with
+    # nothing left for this process to hold open.
+    local -a NO_SHARE=(-o ControlMaster=no -o ControlPath=none)
+
     if $BG; then
-        "${REAL_SSH[@]}" -fN "${FWD[@]}" "$HOST"
+        "${REAL_SSH[@]}" "${NO_SHARE[@]}" -fN "${FWD[@]}" "$HOST"
     else
-        exec "${REAL_SSH[@]}" -N "${FWD[@]}" "$HOST"
+        "${REAL_SSH[@]}" "${NO_SHARE[@]}" -N "${FWD[@]}" "$HOST" &
+        local ssh_pid=$!
+        spin "tunnel active" "$ssh_pid"
+        wait "$ssh_pid"
     fi
 }

@@ -18,6 +18,7 @@ source "$LIBDIR/lsh/mv.sh"
 source "$LIBDIR/lsh/keys.sh"
 source "$LIBDIR/lsh/tunnel.sh"
 source "$LIBDIR/lsh/connect.sh"
+source "$LIBDIR/lsh/hack.sh"
 
 LSH_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 
@@ -83,6 +84,11 @@ case "$1" in
         lsh_tunnel "$@"
         exit $?
         ;;
+    hack)
+        shift
+        lsh_hack "$@"
+        exit $?
+        ;;
 esac
 
 # Use kitten ssh only when running inside Kitty terminal
@@ -146,6 +152,11 @@ Commands:
                           local:remote overrides the local-side port
                           Comma-separate multiple: 1111,2222,1112:1111
                           -d backgrounds the tunnel instead (-fN)
+
+  lsh hack expose [port]  Expose local sshd (or [port]) via a Cloudflare
+                          Quick Tunnel; prints a `lsh hack connect` line to
+                          paste on the other machine. Ctrl-C to stop.
+  lsh hack connect <line> Connect using a line printed by `lsh hack expose`
 
 Extras:
   --password, -P <pass>   Connect using sshpass (requires sshpass)
