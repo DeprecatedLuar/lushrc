@@ -15,8 +15,8 @@ NAV_ENGINE="${SYSDIR:-$HOME/.config/lushrc/system}/shared/nav-engine.sh"
 SPINNER="${SYSDIR:-$HOME/.config/lushrc/system}/shared/spinner.sh"
 
 CONSUMER_COLUMN_COUNT=2
-CONSUMER_SIZE_COLUMN=1
-CONSUMER_PATH_COLUMN=2
+CONSUMER_PATH_COLUMN=1
+CONSUMER_SIZE_COLUMN=2
 SCAN_LABEL="Scanning"
 DIM_ON=$'\033[2m'
 DIM_OFF=$'\033[0m'
@@ -50,6 +50,11 @@ if [[ -n "$target" ]]; then
         printf "%s disk: could not resolve '%s'\n" "$PROGRAM_NAME" "$target" >&2
         exit 1
     }
+    resolved="$(cd -- "$resolved" 2>/dev/null && pwd)"
+    [[ -n "$resolved" ]] || {
+        printf "%s disk: could not resolve '%s'\n" "$PROGRAM_NAME" "$target" >&2
+        exit 1
+    }
     scope_args=("$resolved")
 fi
 
@@ -61,9 +66,17 @@ print_dim() {
     fi
 }
 
-# The header comes from the shared metric path, so `vch disk` and the no-argument
-# `vch` summary can never disagree about the filesystem numbers.
-"$SYSTEM_METRICS" disk || exit 1
+# The filesystem-wide header only makes sense for the whole-home view — it comes
+# from the shared metric path there, so `vch disk` and the no-argument `vch`
+# summary can never disagree. A scoped call gets the resolved path instead: the
+# df numbers describe the mount, not the folder the user asked about.
+if [[ ${#scope_args[@]} -eq 0 ]]; then
+    "$SYSTEM_METRICS" disk || exit 1
+else
+    scope_bytes=$(du -xsb "${scope_args[0]}" 2>/dev/null | awk '{ print $1 }')
+    printf '%s\t%s\n' "${scope_args[0]/#$HOME/\~}" "$(format_bytes "${scope_bytes:-0}")" \
+        | "$COLUMN_FORMATTER" --columns 2 --delimiter tab --dim 1
+fi
 
 consumers_output=$(mktemp) || exit 1
 reclaim_output=$(mktemp) || exit 1
@@ -76,7 +89,7 @@ consumers_pid=$!
 # for the default whole-home view.
 reclaim_pid=""
 if [[ ${#scope_args[@]} -eq 0 ]]; then
-    "$RECLAIM_SAMPLER" --cache "${rescan_args[@]}" > "$reclaim_output" 2>/dev/null &
+    "$RECLAIM_SAMPLER" > "$reclaim_output" 2>/dev/null &
     reclaim_pid=$!
 fi
 
@@ -90,12 +103,11 @@ wait "$consumers_pid" || exit 1
 printf '\n'
 while IFS=$'\t' read -r bytes path; do
     [[ "$bytes" =~ ^[0-9]+$ ]] || continue
-    printf '%s\t%s\n' "$(format_bytes "$bytes")" "${path/#$HOME/\~}"
+    printf '%s\t%s\n' "${path/#$HOME/\~}" "$(format_bytes "$bytes")"
 done < "$consumers_output" \
     | "$COLUMN_FORMATTER" \
         --columns "$CONSUMER_COLUMN_COUNT" \
         --delimiter tab \
-        --right "$CONSUMER_SIZE_COLUMN" \
         --dim "$CONSUMER_PATH_COLUMN"
 
 reclaimable=$(awk -F'\t' '{ total += $2 } END { printf "%d\n", total }' "$reclaim_output")

@@ -90,6 +90,12 @@ if ! $assume_yes; then
     }
 fi
 
+# Priming sudo once up front keeps the password prompt out of the middle of
+# the +/- status output below, where it would otherwise land mid-provider.
+if awk -F'\t' '$5 == 1 { found=1 } END { exit !found }' <<< "$plan"; then
+    sudo -v || exit 1
+fi
+
 printf '\n'
 failures=0
 while IFS=$'\t' read -r id bytes command consequence needs_sudo; do

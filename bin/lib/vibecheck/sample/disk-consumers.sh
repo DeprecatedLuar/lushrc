@@ -19,6 +19,10 @@ SCAN_LIMIT=12
 # reported as a single total: they are not yours to reorganise, so a breakdown
 # would be noise. Absent or other-filesystem entries drop out silently.
 SYSTEM_ROOTS=(/nix /var /usr /opt /srv)
+# Same XDG location the trash reclaim provider and nav-engine resolve. Nested
+# two levels under $HOME, so the depth-1 scan below folds it into ~/.local
+# instead of giving it its own row — call it out explicitly.
+TRASH_DIR="${XDG_TRASH_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/Trash}"
 
 rescan=false
 scope=""
@@ -54,6 +58,8 @@ scan() {
         | awk -F'\t' -v scope="$scope" '$2 != scope'
 
     $scoped && return 0
+
+    [[ -d "$TRASH_DIR" ]] && du -xb --max-depth=0 "$TRASH_DIR" 2>/dev/null
 
     local root
     for root in "${SYSTEM_ROOTS[@]}"; do
