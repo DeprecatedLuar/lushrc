@@ -7,8 +7,12 @@ source "${BASHRC:-$HOME/.config/lushrc}/modules/universal/paths.sh"
 # Ensure local configuration file exists
 touch "$BASHRC/modules/local.sh"
 
+# Machine-local defaults: seeded once from what this machine actually has,
+# then owned by the machine (path from paths.sh). Never regenerated after that.
+[ -f "$LUSHRC_DEFAULTS" ] || "$SYSDIR/reload/gen-defaults.sh"
+
 # Source remaining module files (paths.sh already sourced xdg.sh)
-source "$BASHRC/modules/defaults/defaults.sh"
+source "$LUSHRC_DEFAULTS"
 source "$BASHRC/modules/universal/aliases.sh"
 source "$BASHRC/modules/local.sh"
 

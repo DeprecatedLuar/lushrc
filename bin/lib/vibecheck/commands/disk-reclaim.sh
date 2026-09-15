@@ -14,7 +14,6 @@ LIB_DIR="$SCRIPT_DIR/.."
 RECLAIM_SAMPLER="$LIB_DIR/sample/reclaim.sh"
 COLUMN_FORMATTER="$LIB_DIR/format/columns.sh"
 
-CACHE_DIR="${TMPDIR:-/tmp}/vch-disk-$USER"
 PLAN_COLUMN_COUNT=3
 PLAN_SIZE_COLUMN=1
 PLAN_CONSEQUENCE_COLUMN=3
@@ -110,10 +109,5 @@ while IFS=$'\t' read -r id bytes command consequence needs_sudo; do
         disk_status_line "$MARK_FAILED" "$id" "${output##*$'\n'}"
     fi
 done <<< "$plan"
-
-# The cached figures now describe a filesystem that no longer exists. Dropping
-# the cache is what keeps the next `vch disk` from reporting the space it just
-# freed as still reclaimable.
-rm -rf "$CACHE_DIR"
 
 exit $((failures > 0))

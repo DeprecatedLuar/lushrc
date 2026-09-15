@@ -68,7 +68,11 @@ sync_ssh_private_keys
 #--[SYNC MIME DEFAULTS]------------------------
 
 source "$RELOAD_DIR/sync-mime-defaults.sh"
-ln -sf "$BASHRC/modules/defaults/mimeapps.list" "$HOME/.config/mimeapps.list"
+ln -sfn "$LUSHRC_MIMEAPPS" "$HOME/.config/mimeapps.list"
+
+#--[CHECK PROGRAM DEFAULTS]--------------------
+
+"$RELOAD_DIR/check-defaults.sh"
 
 #--[SYSTEM-LEVEL SYNC]-------------------------
 

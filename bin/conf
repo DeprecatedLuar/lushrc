@@ -30,7 +30,7 @@ case "$1" in
   alias|aliases) $action "$BASHRC/modules/universal/aliases.sh" ;;
   path|paths)   $action "$BASHRC/modules/universal/paths.sh" ;;
   local)        $action "$BASHRC/modules/local.sh" ;;
-  defaults)     $action "$BASHRC/modules/defaults/defaults.sh" ;;
+  defaults)     $action "$LUSHRC_DEFAULTS" ;;
   # system configs
   ssh)          $action ~/.ssh/config ;;
   hosts)        $action /etc/hosts ;;
@@ -64,7 +64,7 @@ case "$1" in
     echo "  aliases      $BASHRC/modules/universal/aliases.sh"
     echo "  paths        $BASHRC/modules/universal/paths.sh"
     echo "  local        $BASHRC/modules/local.sh"
-    echo "  defaults     $BASHRC/modules/defaults/defaults.sh"
+    echo "  defaults     $LUSHRC_DEFAULTS"
     echo ""
     echo "System:"
     echo "  ssh          ~/.ssh/config"

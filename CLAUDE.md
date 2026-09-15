@@ -258,8 +258,7 @@ would require a guess (`~/.cache`, the trash) deliberately have **no** provider:
 sized rows in the consumers list and never as an action. Adding support for a new tool is one new
 file in `reclaim/` and no edit anywhere else — `sample/reclaim.sh` globs the directory.
 
-Both samplers cache to `/tmp/vch-disk-$USER` with a 24h expiry, and `disk reclaim` deletes that
-directory after running so the next `vch disk` cannot report freed space as still reclaimable.
+Both samplers always scan live — no caching, so `vch disk` never reports a stale total.
 - **conf**: Quick access to config files
 - **lush**: Self-management (`update`, `status`, `version`, `root`, `install`, `rm`, `list`)
 - **gh-install** (`system/shared/gh-install.sh`): `gh_install <binary> <user/repo>` — lazy-installs GitHub-hosted binaries via the-satellite. Used by `tcpeek`, `netboop`, `dredge`, `dots`.
@@ -289,8 +288,30 @@ Key system libs:
 ### Adding Configuration Modules
 
 - **Universal** (always loaded): `modules/universal/`, add sourcing in `source.sh`
-- **Defaults** (program selections): `modules/defaults/`
+- **Defaults** (program selections + mime map): `$LUSHRC_DEFAULTS_DIR` (`~/.local/share/lushrc/`) — **not in the repo**
 - **Local** (user-specific, never committed): `modules/local.sh`
+
+### Machine-local defaults
+
+`defaults.sh` and `mimeapps.list` are deliberately absent from the repo: a committed copy asserts
+programs the machine may not have (`paraloid` has kitty and a Wayland launcher; `nuremberg`, a
+headless VPS, has neither). Instead `system/reload/gen-defaults.sh` seeds
+`$LUSHRC_DEFAULTS` on first shell start **only when the file is missing**, resolving `TERMINAL`
+and `EDITOR` against what is actually in `PATH` and leaving every other role as a commented
+placeholder. After seeding the file belongs to the machine — hand-edited, never regenerated,
+never overwritten.
+
+Only `TERMINAL` and `EDITOR` are resolved because they are the two whose absence breaks things
+(`git commit`, `visudo`, `hotline`); a missing media player is just a missing media player. An
+unresolvable role is left **unset rather than wrong** — that is the whole point over hardcoding.
+
+Resolution uses `type -P` (not `command -v`, which also matches functions and aliases) and
+`printf -v` rather than `VAR=$(...)`, keeping the whole pass fork-free — 0.5ms, vs 4.4ms with
+command substitution. That cost is why the result needs no caching layer beyond the seed file.
+
+Paths come from `paths.sh` (`LUSHRC_DEFAULTS_DIR`, `LUSHRC_DEFAULTS`, `LUSHRC_MIMEAPPS`) — never
+hardcode them; `sync-mime-defaults.sh`, `reload.sh`, `bin/conf` and the `ed` alias all read those.
+`modules/local.sh` still sources last, so it overrides anything here.
 
 ## Testing & Maintenance
 

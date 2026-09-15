@@ -1324,37 +1324,52 @@ EOF
     prefixes|prefix)
         case "${2:-}" in
             rm|remove)
-                target="${3:-}"
-                if [[ -z "$target" ]]; then
-                    echo "Usage: kettle prefix rm <source>_<name>" >&2
+                if [[ $# -lt 3 ]]; then
+                    echo "Usage: kettle prefix rm <source>_<name> [<source>_<name> ...]" >&2
                     exit 1
                 fi
-                resolved=$(resolve_gallery_prefix "$target") || exit 1
-                label="$target"
-                if [[ ! -d "$resolved/drive_c" ]]; then
-                    echo "Error: not a wine prefix (no drive_c): $resolved" >&2
-                    exit 1
-                fi
-                if [[ "$resolved" != "$CUSTOM_PREFIX_DIR"/* && \
-                      "$resolved" != "$HOME/Games/Heroic/Prefixes"/* && \
-                      "$resolved" != "$HOME/Games/umu"/* && \
-                      "$resolved" != "$HYDRA_PREFIX_DIR"/* && \
-                      "$resolved" != "$STEAM_ROOT/steamapps/compatdata"/* ]]; then
-                    echo "Error: refusing to delete outside known prefix roots: $resolved" >&2
-                    exit 1
-                fi
-                size=$(du -sh "$resolved" 2>/dev/null | cut -f1)
-                echo "About to trash: $label"
-                echo "  $resolved ($size)"
-                read -r -p "Delete? [y/N] " reply < /dev/tty
-                if [[ "$reply" =~ ^[Yy]$ ]]; then
-                    if command -v gio &>/dev/null; then
-                        gio trash -- "$resolved"
-                    else
-                        echo "Warning: gio not found, falling back to permanent rm -rf" >&2
-                        rm -rf -- "$resolved"
+                had_error=0
+                rm_labels=() rm_paths=()
+                for target in "${@:3}"; do
+                    resolved=$(resolve_gallery_prefix "$target") || { had_error=1; continue; }
+                    if [[ ! -d "$resolved/drive_c" ]]; then
+                        echo "Error: not a wine prefix (no drive_c): $resolved" >&2
+                        had_error=1
+                        continue
+                    fi
+                    if [[ "$resolved" != "$CUSTOM_PREFIX_DIR"/* && \
+                          "$resolved" != "$HOME/Games/Heroic/Prefixes"/* && \
+                          "$resolved" != "$HOME/Games/umu"/* && \
+                          "$resolved" != "$HYDRA_PREFIX_DIR"/* && \
+                          "$resolved" != "$STEAM_ROOT/steamapps/compatdata"/* ]]; then
+                        echo "Error: refusing to delete outside known prefix roots: $resolved" >&2
+                        had_error=1
+                        continue
+                    fi
+                    rm_labels+=("$target")
+                    rm_paths+=("$resolved")
+                done
+                if [[ ${#rm_paths[@]} -gt 0 ]]; then
+                    echo "About to trash:"
+                    for i in "${!rm_paths[@]}"; do
+                        size=$(du -sh "${rm_paths[$i]}" 2>/dev/null | cut -f1)
+                        echo "  ${rm_labels[$i]}: ${rm_paths[$i]} ($size)"
+                    done
+                    prompt="Delete? [y/N] "
+                    [[ ${#rm_paths[@]} -gt 1 ]] && prompt="Delete all ${#rm_paths[@]}? [y/N] "
+                    read -r -p "$prompt" reply < /dev/tty
+                    if [[ "$reply" =~ ^[Yy]$ ]]; then
+                        for resolved in "${rm_paths[@]}"; do
+                            if command -v gio &>/dev/null; then
+                                gio trash -- "$resolved"
+                            else
+                                echo "Warning: gio not found, falling back to permanent rm -rf" >&2
+                                rm -rf -- "$resolved"
+                            fi
+                        done
                     fi
                 fi
+                [[ $had_error -eq 0 ]] || exit 1
                 ;;
             "")
                 list_prefix_gallery

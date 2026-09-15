@@ -16,7 +16,17 @@ if [[ -n "$2" ]]; then
     fi
 
     # Resolve destination
-    dest_path=$("$SYSDIR/shared/nav-engine.sh" "$2") || exit 1
+    if [[ -e "$2" ]]; then
+        dest_path=$(realpath "$2")
+    else
+        # Doesn't exist yet: resolve the directory part via nav-engine,
+        # keep the basename literal (nav-engine can't "find" a file that
+        # doesn't exist yet).
+        dest_dir=$(dirname -- "$2")
+        dest_name=$(basename -- "$2")
+        resolved_dir=$("$SYSDIR/shared/nav-engine.sh" "$dest_dir") || exit 1
+        dest_path="$resolved_dir/$dest_name"
+    fi
 
     # Determine final symlink path
     if [[ -d "$dest_path" ]]; then

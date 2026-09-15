@@ -74,17 +74,17 @@ fi
 # Nav index expansion
 expand_index() {
     case "$1" in
-        w/*)   echo "$WORKSPACE/${1#w/}" ;;
-        t/*)   echo "$TOOLS/${1#t/}" ;;
+        w/*)   echo "${WORKSPACE:-$HOME/Workspace}/${1#w/}" ;;
+        t/*)   echo "${TOOLS:-$HOME/Workspace/tools}/${1#t/}" ;;
         h/*)   echo "$HOME/${1#h/}" ;;
         H/*)   echo "/home/${1#H/}" ;;
         c/*)   echo "$HOME/.config/${1#c/}" ;;
         b/*|bin/*)   echo "$HOME/bin/${1#*/}" ;;
-        s/*|serv/*|ser/*) echo "$SERVICES_DIR/${1#*/}" ;;
+        s/*|serv/*|ser/*) echo "${SERVICES_DIR:-$HOME/Workspace/services}/${1#*/}" ;;
         sb/*)  echo "/usr/local/bin/${1#sb/}" ;;
         lb/*)  echo "$HOME/.local/bin/${1#lb/}" ;;
         d/*)   echo "$HOME/Downloads/${1#d/}" ;;
-        doc/*) echo "$DOCUMENTS/${1#doc/}" ;;
+        doc/*) echo "${DOCUMENTS:-$HOME/Documents}/${1#doc/}" ;;
         trash/*) echo "$TRASH_DIR/${1#trash/}" ;;
         med/*|m/*|media/*) echo "${MEDIA:-$HOME/Media}/${1#*/}" ;;
         pic/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures/${1#pic/}" ;;
@@ -93,7 +93,7 @@ expand_index() {
         l/*)   echo "$HOME/.local/${1#l/}" ;;
         etc/*) echo "/etc/${1#etc/}" ;;
         ssh/*) echo "$HOME/.ssh/${1#ssh/}" ;;
-        back/*) echo "$BACKUP/${1#back/}" ;;
+        back/*) echo "${BACKUP:-$HOME/Backup}/${1#back/}" ;;
         # Root directories
         var/*) echo "/var/${1#var/}" ;;
         usr/*) echo "/usr/${1#usr/}" ;;
@@ -106,17 +106,17 @@ expand_index() {
         root/*) echo "/root/${1#root/}" ;;
         sbin/*) echo "/sbin/${1#sbin/}" ;;
         lib/*) echo "/lib/${1#lib/}" ;;
-        w)     echo "$WORKSPACE" ;;
-        t)     echo "$TOOLS" ;;
+        w)     echo "${WORKSPACE:-$HOME/Workspace}" ;;
+        t)     echo "${TOOLS:-$HOME/Workspace/tools}" ;;
         h)     echo "$HOME" ;;
         H)     echo "/home" ;;
         c)     echo "$HOME/.config" ;;
         b|bin) echo "$HOME/bin" ;;
-        s|serv|ser) echo "$SERVICES_DIR" ;;
+        s|serv|ser) echo "${SERVICES_DIR:-$HOME/Workspace/services}" ;;
         sb)    echo "/usr/local/bin" ;;
         lb)    echo "$HOME/.local/bin" ;;
         d)     echo "$HOME/Downloads" ;;
-        doc)   echo "$DOCUMENTS" ;;
+        doc)   echo "${DOCUMENTS:-$HOME/Documents}" ;;
         trash) echo "$TRASH_DIR" ;;
         med|m|media) echo "${MEDIA:-$HOME/Media}" ;;
         pic)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures" ;;
@@ -125,7 +125,7 @@ expand_index() {
         l)     echo "$HOME/.local" ;;
         etc)   echo "/etc" ;;
         ssh)   echo "$HOME/.ssh" ;;
-        back)  echo "$BACKUP" ;;
+        back)  echo "${BACKUP:-$HOME/Backup}" ;;
         # Root directories
         var)   echo "/var" ;;
         usr)   echo "/usr" ;;

@@ -5,9 +5,9 @@
 set -eo pipefail
 
 # Source defaults to get variables
-source "$BASHRC/modules/defaults/defaults.sh"
+source "$LUSHRC_DEFAULTS"
 
-MIMEAPPS="$BASHRC/modules/defaults/mimeapps.list"
+MIMEAPPS="$LUSHRC_MIMEAPPS"
 
 #--[FIND DESKTOP FILES]---------------------------
 

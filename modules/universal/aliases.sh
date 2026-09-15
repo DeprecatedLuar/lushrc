@@ -24,7 +24,7 @@ alias browser='$BROWSER'
 alias eup='$EDITOR $BASHRC/modules/universal/paths.sh'
 alias eua='$EDITOR $BASHRC/modules/universal/aliases.sh'
 alias el='$EDITOR $BASHRC/modules/local.sh'
-alias ed='$EDITOR $BASHRC/modules/defaults/defaults.sh'
+alias ed='$EDITOR $LUSHRC_DEFAULTS'
 alias tx='. $BASHRC/bin/tx'
 
 alias compose='docker-compose'

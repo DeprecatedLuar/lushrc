@@ -5,7 +5,9 @@
 #
 # shared: net.sh cloudflare-tunnel.sh
 #
-# Depends on: SYSDIR (set up by bin/lsh before this is sourced).
+# Depends on SYSDIR, LSH_SELF and _RAW_SSH (set up by main.sh before this is
+# sourced), so a tunnelled connection reuses the same terminal adapters as a
+# plain one.
 
 _LSH_HACK_TUNNEL_PID_FILE="${TMPDIR:-/tmp}/lsh-hack-tunnel.pid"
 
@@ -37,15 +39,16 @@ lsh_hack_expose() {
         return 1
     fi
 
-    local cleanup_done=false
+    local cleanup_done=false stop=false
     _lsh_hack_expose_cleanup() {
         $cleanup_done && return
         cleanup_done=true
+        stop=true
         stop_quick_tunnel "$_LSH_HACK_TUNNEL_PID_FILE"
     }
     trap _lsh_hack_expose_cleanup EXIT INT TERM
 
-    echo "  · starting cloudflare tunnel for port $port..." >&2
+    printf 'starting cloudflare tunnel for port %s\n\n' "$port" >&2
     local public_url
     public_url=$(start_quick_tunnel "ssh://localhost:$port" "$_LSH_HACK_TUNNEL_PID_FILE") || {
         echo "error: tunnel failed to start" >&2
@@ -57,16 +60,44 @@ lsh_hack_expose() {
     host="$(hostname)"
 
     local line="lsh hack connect ${user}@${host}@${public_url}"
-    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-        printf '\033[34m%s\033[0m\n' "$line"
+    local interactive=false
+    [[ -t 1 && -z "${NO_COLOR:-}" ]] && interactive=true
+
+    if $interactive; then
+        printf '\033[34m%s\033[0m\n\n' "$line"
     else
-        printf '%s\n' "$line"
+        printf '%s\n\n' "$line"
     fi
 
-    # Block until interrupted, like `serve`. A single blocking sleep (rather
-    # than a loop) is required so Ctrl-C ends the function instead of just
-    # killing this one sleep and letting the next iteration respawn it.
-    sleep infinity
+    local can_copy=false
+    $interactive && command -v wl-copy >/dev/null 2>&1 && can_copy=true
+    $can_copy && printf 'press enter to copy\n'
+
+    local tunnel_pid=""
+    [[ -f "$_LSH_HACK_TUNNEL_PID_FILE" ]] && tunnel_pid=$(cat "$_LSH_HACK_TUNNEL_PID_FILE")
+
+    # Block until interrupted, like `serve`, animating the same "tunnel
+    # active..." spinner as `lsh tunnel`. `read` here is a full-line read
+    # (no -n) rather than a single-char one: -n forces the terminal into a
+    # mode where Ctrl-C arrives as a literal byte instead of raising SIGINT,
+    # which is what made the trap below unreachable. A plain line read keeps
+    # normal signal delivery intact, and doubles as the Enter-to-copy trigger.
+    local dots=""
+    while ! $stop && { [[ -z "$tunnel_pid" ]] || kill -0 "$tunnel_pid" 2>/dev/null; }; do
+        printf '\rtunnel active%-3s' "$dots"
+        dots="${dots}."
+        [[ ${#dots} -gt 3 ]] && dots=""
+        if $can_copy; then
+            local key=""
+            if read -rs -t 0.3 key; then
+                printf '%s' "$line" | wl-copy 2>/dev/null
+                printf ' (copied)'
+            fi
+        else
+            sleep 0.3
+        fi
+    done
+    printf '\r\033[K'
 }
 
 lsh_hack_connect() {
@@ -78,7 +109,7 @@ lsh_hack_connect() {
         return 1
     fi
 
-    if [[ ! "$line" =~ ^([^@]+)@([^@]+)@(https://[a-z0-9-]+\.trycloudflare\.com)$ ]]; then
+    if [[ ! "$line" =~ ^([^@]+)@([^@]+)@(https://[a-z0-9-]+\.trycloudflare\.com)/?$ ]]; then
         echo "lsh hack connect: unrecognized line, expected <user>@<host>@<tunnel-url>" >&2
         return 1
     fi
@@ -88,7 +119,24 @@ lsh_hack_connect() {
 
     ensure_cloudflared || return 1
 
-    exec ssh -o "ProxyCommand=cloudflared access ssh --hostname ${tunnel_host}" "${user}@${host}"
+    local -a ssh_args=(
+        -o "ProxyCommand=cloudflared access ssh --hostname ${tunnel_host}"
+        "${user}@${host}"
+    )
+
+    # cloudflared's edge handshake sits in front of SSH's own, so the default
+    # ten-second connect budget is too tight for a tunnelled connection.
+    export LSH_CONNECT_TIMEOUT="${LSH_CONNECT_TIMEOUT:-30}"
+
+    # Mosh is refused outright: a Quick Tunnel carries only the TCP SSH stream,
+    # so Mosh's UDP client could never reach the remote server.
+    if [[ ${LSH_INTERACTIVE_SHELL:-} == 1 && -t 0 && -t 1 && -z ${TMUX:-} ]] \
+        && command -v tmux >/dev/null 2>&1; then
+        lsh_stage_connection "$LSH_SELF" "$_RAW_SSH" 0 "${ssh_args[@]}"
+        return $?
+    fi
+
+    lsh_exec_ssh "$_RAW_SSH" "${ssh_args[@]}"
 }
 
 lsh_hack() {

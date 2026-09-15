@@ -55,10 +55,22 @@ export LIBDIR="$BASHRC/bin/lib"
 # System directory (always-shipped shell-init dependencies: shared/, reload/)
 export SYSDIR="$BASHRC/system"
 
+# Machine-local defaults (program selections + mime map). Seeded once by
+# system/reload/gen-defaults.sh, then owned by the machine — never in the repo,
+# since a committed copy would assert programs the machine may not have.
+export LUSHRC_DEFAULTS_DIR="$XDG_DATA_HOME/lushrc"
+export LUSHRC_DEFAULTS="$LUSHRC_DEFAULTS_DIR/defaults.sh"
+export LUSHRC_MIMEAPPS="$LUSHRC_DEFAULTS_DIR/mimeapps.list"
+
 #------------------------ EXTRAS ---------------------------
 
 
 export PIP_REQUIRE_VIRTUALENV=true
+
+# Route GTK file pickers through the XDG portal. Not a program default: it is a
+# behavior toggle, so it ships with lushrc rather than being seeded per machine.
+# Inert without a portal, so it is safe on headless boxes.
+export GTK_USE_PORTAL=1
 
 #==================== PATH CONFIGURATION ====================
 

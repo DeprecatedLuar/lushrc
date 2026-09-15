@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
-# disk-consumers.sh - biggest space consumers under a scope, cached
-#
-# Walking a large home directory touches every inode, which takes long enough
-# that an uncached `vch disk` would stop being worth typing. Results are cached
-# and expire on their own, so the cache never has to be thought about: within a
-# session it is instant, a day later it is fresh again. Whatever frees space is
-# expected to delete the cache directory rather than wait for the expiry.
+# disk-consumers.sh - biggest space consumers under a scope, always live
 #
 # Output: BYTES \t PATH, largest first.
-# Usage: disk-consumers.sh [--rescan] [PATH]
+# Usage: disk-consumers.sh [PATH]
 
-CACHE_DIR="${TMPDIR:-/tmp}/vch-disk-$USER"
-CACHE_PREFIX=scan
-CACHE_TTL_SECONDS=86400
 SCAN_DEPTH=1
 SCAN_LIMIT=12
 # Directories outside $HOME that routinely dominate a root filesystem. Each is
@@ -24,11 +15,9 @@ SYSTEM_ROOTS=(/nix /var /usr /opt /srv)
 # instead of giving it its own row — call it out explicitly.
 TRASH_DIR="${XDG_TRASH_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/Trash}"
 
-rescan=false
 scope=""
 for arg in "$@"; do
     case "$arg" in
-        --rescan) rescan=true ;;
         -*)
             printf 'disk-consumers: unknown option %s\n' "$arg" >&2
             exit 2
@@ -49,7 +38,6 @@ fi
 }
 
 scope="$(cd -- "$scope" && pwd)"
-cache_file="$CACHE_DIR/$CACHE_PREFIX${scope//\//_}"
 
 scan() {
     # -x keeps each walk inside one filesystem; -d1 lists the scope's children,
@@ -69,19 +57,4 @@ scan() {
     done
 }
 
-cache_expired() {
-    local written
-    written=$(stat -c %Y "$cache_file" 2>/dev/null) || return 0
-    (( $(date +%s) - written >= CACHE_TTL_SECONDS ))
-}
-
-write_cache() {
-    mkdir -p "$CACHE_DIR" || return 1
-    scan | sort -k1,1nr | head -n "$SCAN_LIMIT" > "$cache_file"
-}
-
-if $rescan || [[ ! -s "$cache_file" ]] || cache_expired; then
-    write_cache || exit 1
-fi
-
-cat "$cache_file"
+scan | sort -k1,1nr | head -n "$SCAN_LIMIT"

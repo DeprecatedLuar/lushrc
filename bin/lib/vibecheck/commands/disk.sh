@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # disk.sh - disk usage: filesystem header, biggest consumers, reclaimable total
-# Usage: vch disk [PATH] [--rescan]
+# Usage: vch disk [PATH]
 # shared: format/bytes.sh
 
 PROGRAM_NAME="vch"
-USAGE="Usage: $PROGRAM_NAME disk [PATH] [--rescan]"
+USAGE="Usage: $PROGRAM_NAME disk [PATH]"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/.."
 SYSTEM_METRICS="$LIB_DIR/get-system-metrics.sh"
@@ -23,11 +23,9 @@ DIM_OFF=$'\033[0m'
 
 source "$LIB_DIR/format/bytes.sh"
 
-rescan_args=()
 target=""
 for arg in "$@"; do
     case "$arg" in
-        --rescan) rescan_args=(--rescan) ;;
         help|-h|--help)
             printf '%s\n' "$USAGE"
             exit 0
@@ -82,7 +80,7 @@ consumers_output=$(mktemp) || exit 1
 reclaim_output=$(mktemp) || exit 1
 trap 'rm -f "$consumers_output" "$reclaim_output"' EXIT
 
-"$CONSUMERS_SAMPLER" "${rescan_args[@]}" "${scope_args[@]}" > "$consumers_output" 2>/dev/null &
+"$CONSUMERS_SAMPLER" "${scope_args[@]}" > "$consumers_output" 2>/dev/null &
 consumers_pid=$!
 
 # Reclaim is a property of the machine, not of a subtree, so it is sampled only
