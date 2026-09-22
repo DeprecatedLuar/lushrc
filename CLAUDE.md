@@ -27,7 +27,7 @@ hotline help        # Command launcher help
 $BASHRC/bashrc (lushrc main)
   ↓ sources
 modules/universal/source.sh
-  ├→ paths.sh (sets BASHRC, XDG_*, WORKSPACE, TOOLS, etc.)
+  ├→ paths.sh (sets BASHRC, XDG_*, WORKSPACE, etc.)
   ├→ xdg.sh (XDG directory initialization)
   ├→ defaults/defaults.sh (EDITOR, BROWSER, TERMINAL selections)
   ├→ aliases.sh (shell shortcuts)
@@ -40,7 +40,6 @@ modules/universal/source.sh
 - `SYSDIR=$BASHRC/system` - Always-shipped shell-init dependencies (`shared/`, `reload/`)
 - `LIBDIR=$BASHRC/bin/lib` - Lazily-installed tool implementations
 - `WORKSPACE=$HOME/Workspace` - Root workspace directory
-- `TOOLS=$WORKSPACE/tools` - Cloned repos and external tools
 - `PROJECTS=$WORKSPACE/dev` - Your active development projects
 - `MEDIA=$HOME/Media` - Flat media hub; subfolders are project/tool-named
 - `MEDIA_GALLERY=$MEDIA/gallery` - Auto-populated symlink gallery (`pictures/`, `videos/`, `audio/`)
@@ -97,7 +96,7 @@ On every `reload`:
 2. `sync_tool_stubs()` scans `bin/lib/*/main.sh` and generates a `bin/<name>` stub for any tool
    that doesn't have one yet. Create-only — it never deletes a stub, since an absent
    `bin/lib/<tool>/` is the normal state for an as-yet-uninstalled lazy tool.
-3. Recreates symlinks: `$BASHRC/bin/*` → `~/bin/`, `$TOOLS/bin/*` → `~/bin/`
+3. Recreates symlinks: `$PROJECTS/scripts/*` → `~/bin/`, `$BASHRC/bin/lib/*` → `~/bin/lib/`
 4. `$BASHRC/bin` is on `$PATH` directly — no symlinks needed for bin/ scripts themselves
 5. Syncs UV tools, systemd configs, fonts, applications, media gallery
 
@@ -126,7 +125,7 @@ or go offline deliberately.
 **Nav Index Shorthand**:
 ```
 h/  → $HOME/         H/  → /home/
-w/  → $WORKSPACE/    t/  → $TOOLS/       c/  → $HOME/.config/
+w/  → $WORKSPACE/    src/ → ~/.local/src/  c/  → $HOME/.config/
 b/|bin/ → $HOME/bin/     d/  → $HOME/Downloads/   l/ → $HOME/.local/
 sb/ → /usr/local/bin/   doc/ → $DOCUMENTS/    etc/ → /etc/
 s/|serv/|ser/ → $SERVICES_DIR/
@@ -344,11 +343,11 @@ source ~/.bashrc
   ↓
 $SYSDIR/reload/reload.sh
   ├─ ensure-dirs.sh       (mkdir -p all workspace dirs)
-  ├─ chmod +x             (bin/, TOOLS/bin/, bin/lib/*/main.sh, system/*/*)
+  ├─ chmod +x             (bin/, bin/lib/*/main.sh, system/*/*)
   ├─ symlink-farm.sh
   │   ├─ cleanup broken symlinks
   │   ├─ sync_tool_stubs → generate bin/<name> for any new bin/lib/<name>/main.sh
-  │   ├─ link $TOOLS/bin/* → ~/bin/
+  │   ├─ link $PROJECTS/scripts/* → ~/bin/
   │   ├─ sync UV tools, fonts, Nix apps, systemd
   │   ├─ sync_media_gallery → $MEDIA_GALLERY/{pictures,videos,audio,wallpapers}
   │   └─ sync_workspace_media → cross-links $WORKSPACE ↔ $MEDIA

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 PROGRAM_NAME="$(basename "$0")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROC_ROOT="/proc"
 EXPECTED_ARGUMENT_COUNT=1
 PERCENT_TENTHS_MULTIPLIER=10
@@ -10,26 +11,10 @@ fail() {
     exit 1
 }
 
+source "$SCRIPT_DIR/process-name.sh"
+
 is_counter() {
     [[ "$1" =~ ^[0-9]+$ ]]
-}
-
-read_process_name() {
-    local pid="$1"
-    local fallback_name="$2"
-    local process_name=""
-
-    if [[ -r "$PROC_ROOT/$pid/cmdline" ]]; then
-        IFS= read -r -d '' process_name < "$PROC_ROOT/$pid/cmdline" || true
-        process_name="${process_name##*/}"
-    fi
-    if [[ -z "$process_name" ]] \
-        && ! IFS= read -r process_name < "$PROC_ROOT/$pid/comm"; then
-        process_name="$fallback_name"
-    fi
-    process_name="${process_name//$'\t'/ }"
-    process_name="${process_name//$'\e'/?}"
-    printf '%s\n' "$process_name"
 }
 
 (($# == EXPECTED_ARGUMENT_COUNT)) \
@@ -53,7 +38,7 @@ while read -r row_gpu pid process_type sm memory encoder decoder jpeg ofa fallba
     done
     ((highest_usage > 0)) || continue
 
-    process_name=$(read_process_name "$pid" "$fallback_name")
+    read_process_name process_name "$PROC_ROOT/$pid" "$fallback_name"
     printf 'process %d %d %s\n' \
         "$pid" "$((highest_usage * PERCENT_TENTHS_MULTIPLIER))" "$process_name"
 done <<< "$pmon_output"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 PROGRAM_NAME="$(basename "$0")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROC_ROOT="/proc"
 PROC_UPTIME_PATH="$PROC_ROOT/uptime"
 EXPECTED_ARGUMENT_COUNT=2
@@ -15,25 +16,10 @@ fail() {
     exit 1
 }
 
+source "$SCRIPT_DIR/process-name.sh"
+
 is_counter() {
     [[ "$1" =~ ^[0-9]+$ ]]
-}
-
-read_process_name() {
-    local pid="$1"
-    local process_name=""
-
-    if [[ -r "$PROC_ROOT/$pid/cmdline" ]]; then
-        IFS= read -r -d '' process_name < "$PROC_ROOT/$pid/cmdline" || true
-        process_name="${process_name##*/}"
-    fi
-    if [[ -z "$process_name" ]] \
-        && ! IFS= read -r process_name < "$PROC_ROOT/$pid/comm"; then
-        process_name="PID $pid"
-    fi
-    process_name="${process_name//$'\t'/ }"
-    process_name="${process_name//$'\e'/?}"
-    printf '%s\n' "$process_name"
 }
 
 read_monotonic_microseconds() {
@@ -215,6 +201,6 @@ done
 for pid in "${!process_usage_tenths[@]}"; do
     usage_tenths="${process_usage_tenths[$pid]}"
     ((usage_tenths > 0)) || continue
-    process_name=$(read_process_name "$pid")
+    read_process_name process_name "$PROC_ROOT/$pid" "PID $pid"
     printf 'process %d %d %s\n' "$pid" "$usage_tenths" "$process_name"
 done

@@ -14,6 +14,7 @@ mkdir -p "$MEDIA"
 mkdir -p "$DOCUMENTS"
 mkdir -p "$DOWNLOADS"
 mkdir -p "$DOWNLOADS_STAGE/previous"
+mkdir -p "$HOME/.local/src"
 mkdir -p "$HOME/bin"
 mkdir -p "$HOME/bin/lib"
 mkdir -p "$HOME/bin/sys"
@@ -26,16 +27,10 @@ mkdir -p "$AUDIO_GALLERY"
 #--[WORKSPACE STRUCTURE]------------------------
 
 mkdir -p "$WORKSPACE"
-mkdir -p "$TOOLS"
 mkdir -p "$PROJECTS"
 mkdir -p "$PROJECTS/scripts"
 mkdir -p "$SHARED"
-
-# Workspace tools subdirectories
 mkdir -p "$SERVICES_DIR"
-mkdir -p "$TOOLS/bin"
-mkdir -p "$TOOLS/bin/lib"
-mkdir -p "$TOOLS/bin/completions"
 
 #--[CRITICAL SHELL SYMLINKS]-------------------
 
@@ -53,11 +48,10 @@ ln -sf .config "$HOME/Config" 2>/dev/null || true
 
 if [[ "$1" == "-v" ]] || [[ "$1" == "--verbose" ]]; then
     echo "✓ Directory structure verified:"
-    echo "  Home: bin, Backup, Media, Documents, Downloads"
+    echo "  Home: bin, Backup, Media, Documents, Downloads, .local/src"
     echo "  Downloads cache: $DOWNLOADS_STAGE/previous"
     echo "  Media: Audio, Pictures, Videos"
-    echo "  Workspace: dev, dev/scripts, shared, tools, services"
-    echo "  Tools: bin"
+    echo "  Workspace: dev, dev/scripts, shared, services"
     echo "  Shell: ~/.bashrc → $BASHRC/bashrc"
     echo "  Shell: ~/.profile → $BASHRC/profile"
     echo "  Convenience: ~/Local → .local, ~/Config → .config"

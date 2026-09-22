@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 PROGRAM_NAME="$(basename "$0")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROC_ROOT="/proc"
 PROC_STAT_PATH="$PROC_ROOT/stat"
 SAMPLE_INTERVAL_SECONDS=1
@@ -10,6 +11,8 @@ fail() {
     printf '%s: %s\n' "$PROGRAM_NAME" "$1" >&2
     exit 1
 }
+
+source "$SCRIPT_DIR/process-name.sh"
 
 is_counter() {
     [[ "$1" =~ ^[0-9]+$ ]]
@@ -74,17 +77,7 @@ read_process_snapshot() {
         is_counter "$stime" || fail "invalid system CPU counter in $stat_path"
         is_counter "$start_time" || fail "invalid start time in $stat_path"
 
-        process_name=""
-        if [[ -r "$PROC_ROOT/$pid/cmdline" ]]; then
-            IFS= read -r -d '' process_name < "$PROC_ROOT/$pid/cmdline" || true
-            process_name="${process_name##*/}"
-        fi
-        if [[ -z "$process_name" ]] \
-            && ! IFS= read -r process_name < "$PROC_ROOT/$pid/comm"; then
-            process_name="PID $pid"
-        fi
-        process_name="${process_name//$'\t'/ }"
-        process_name="${process_name//$'\e'/?}"
+        read_process_name process_name "$PROC_ROOT/$pid" "PID $pid"
 
         ticks["$pid"]=$((utime + stime))
         starts["$pid"]="$start_time"

@@ -304,6 +304,7 @@ Usage: hotline [command]
 
 Commands:
     (none)            Open rofi prompt
+    launcher          Open rofi prompt
     pickup            Attach to tmux session
     list              List running panes
     yellowpage, ylpg  Show last 10 commands
@@ -351,7 +352,7 @@ cmd_deps() {
 
 main() {
     case "$1" in
-        "")              cmd_input ;;
+        ""|launcher)     cmd_input ;;
         -h|--help|help)  show_help ;;
         deps)            cmd_deps ;;
         pickup)          cmd_show ;;

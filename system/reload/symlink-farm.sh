@@ -130,10 +130,8 @@ sync_tool_stubs
 
 setup_sys "$HOME/bin"
 ln -sfn "$HOME/.local/bin" "$HOME/bin/local"
-link_contents "$TOOLS/bin" "$HOME/bin"
 link_contents "$PROJECTS/scripts" "$HOME/bin"
 # $BASHRC/bin is now in PATH directly - no symlinks needed
-link_contents "$TOOLS/bin/lib" "$HOME/bin/lib"
 link_contents "$BASHRC/bin/lib" "$HOME/bin/lib"
 
 # UV tools → ~/.local/bin

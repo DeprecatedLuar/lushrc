@@ -75,7 +75,6 @@ fi
 expand_index() {
     case "$1" in
         w/*)   echo "${WORKSPACE:-$HOME/Workspace}/${1#w/}" ;;
-        t/*)   echo "${TOOLS:-$HOME/Workspace/tools}/${1#t/}" ;;
         h/*)   echo "$HOME/${1#h/}" ;;
         H/*)   echo "/home/${1#H/}" ;;
         c/*)   echo "$HOME/.config/${1#c/}" ;;
@@ -91,6 +90,8 @@ expand_index() {
         vid/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos/${1#vid/}" ;;
         wpp/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers/${1#wpp/}" ;;
         l/*)   echo "$HOME/.local/${1#l/}" ;;
+        src/*) echo "$HOME/.local/src/${1#src/}" ;;
+        state/*) echo "${XDG_STATE_HOME:-$HOME/.local/state}/${1#state/}" ;;
         etc/*) echo "/etc/${1#etc/}" ;;
         ssh/*) echo "$HOME/.ssh/${1#ssh/}" ;;
         back/*) echo "${BACKUP:-$HOME/Backup}/${1#back/}" ;;
@@ -107,7 +108,6 @@ expand_index() {
         sbin/*) echo "/sbin/${1#sbin/}" ;;
         lib/*) echo "/lib/${1#lib/}" ;;
         w)     echo "${WORKSPACE:-$HOME/Workspace}" ;;
-        t)     echo "${TOOLS:-$HOME/Workspace/tools}" ;;
         h)     echo "$HOME" ;;
         H)     echo "/home" ;;
         c)     echo "$HOME/.config" ;;
@@ -123,6 +123,8 @@ expand_index() {
         vid)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos" ;;
         wpp)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers" ;;
         l)     echo "$HOME/.local" ;;
+        src)   echo "$HOME/.local/src" ;;
+        state) echo "${XDG_STATE_HOME:-$HOME/.local/state}" ;;
         etc)   echo "/etc" ;;
         ssh)   echo "$HOME/.ssh" ;;
         back)  echo "${BACKUP:-$HOME/Backup}" ;;

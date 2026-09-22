@@ -15,7 +15,7 @@ TERMINAL_CANDIDATES="kitty ghostty foot alacritty wezterm konsole gnome-terminal
 EDITOR_CANDIDATES="micro nvim vim vi nano"
 
 # Declared-but-empty roles: no sane machine-independent default exists.
-PLACEHOLDER_ROLES="BROWSER DATA_VIEWER MEDIA_PLAYER AUDIO_PLAYER IMAGE_VIEWER FILEMANAGER LAUNCHER"
+PLACEHOLDER_ROLES="BROWSER DATA_VIEWER MEDIA_PLAYER AUDIO_PLAYER IMAGE_VIEWER FILEMANAGER LAUNCHER CLIPBOARD"
 
 # pick VAR cmd... — first candidate present in PATH wins; VAR left empty if none.
 # type -P, not command -v: only real binaries count, never functions or aliases.

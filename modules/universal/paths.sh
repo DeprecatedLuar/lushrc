@@ -41,12 +41,11 @@ export DOWNLOADS="$HOME/Downloads"
 
 # Workspace root and main directories
 export WORKSPACE="$HOME/Workspace"
-export TOOLS="$WORKSPACE/tools"
 export PROJECTS="$WORKSPACE/dev"
 export SHARED="$WORKSPACE/shared"
 export SATELLITE="$PROJECTS/cli/the-satellite"
 
-# Tools subdirectories
+# Workspace subdirectories
 export SERVICES_DIR="$WORKSPACE/services"
 
 # Script library directory (lazily-installed tool implementations)

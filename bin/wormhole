@@ -18,6 +18,8 @@ if [[ -n "$2" ]]; then
     # Resolve destination
     if [[ -e "$2" ]]; then
         dest_path=$(realpath "$2")
+    elif dest_path=$("$SYSDIR/shared/nav-engine.sh" "$2" 2>/dev/null) && [[ -d "$dest_path" ]]; then
+        : # nav shorthand or fuzzy match resolved to an existing directory
     else
         # Doesn't exist yet: resolve the directory part via nav-engine,
         # keep the basename literal (nav-engine can't "find" a file that

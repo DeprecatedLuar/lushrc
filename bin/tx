@@ -42,7 +42,7 @@ if [[ $# -ge 2 ]]; then
             sources+=("${expanded[@]}")
         else
             # Normal path resolution
-            src_resolved="$($SYSDIR/shared/nav-engine.sh $NAV_FLAGS "$src")" || return 1
+            src_resolved="$($SYSDIR/shared/nav-engine.sh $NAV_FLAGS -f "$src")" || return 1
             sources+=("$src_resolved")
         fi
     done

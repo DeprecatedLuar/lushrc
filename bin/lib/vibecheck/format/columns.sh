@@ -3,6 +3,7 @@
 PROGRAM_NAME="$(basename "$0")"
 DEFAULT_GAP_WIDTH=1
 DEFAULT_DELIMITER="whitespace"
+TRUNCATION_MARK="…"
 
 usage() {
     cat <<EOF
@@ -18,6 +19,7 @@ Options:
   -d, --dim COLUMN         Dim COLUMN on a color-capable terminal (repeatable)
       --delimiter MODE     Split fields on whitespace or tabs (default: $DEFAULT_DELIMITER)
       --min-width COL:SIZE Set a minimum width for COL (repeatable)
+      --max-width COL:SIZE Truncate COL to SIZE characters, ending in $TRUNCATION_MARK (repeatable)
       --gap SIZE           Spaces between columns (default: $DEFAULT_GAP_WIDTH)
       --gap-after COL:SIZE Override the gap after a column (repeatable)
   -h, --help                Show this help
@@ -44,6 +46,7 @@ delimiter="$DEFAULT_DELIMITER"
 right_columns=()
 dim_columns=()
 minimum_widths=()
+maximum_widths=()
 gap_after_widths=()
 
 while [[ $# -gt 0 ]]; do
@@ -71,6 +74,11 @@ while [[ $# -gt 0 ]]; do
         --min-width)
             [[ $# -ge 2 ]] || fail "$1 requires COL:SIZE"
             minimum_widths+=("$2")
+            shift 2
+            ;;
+        --max-width)
+            [[ $# -ge 2 ]] || fail "$1 requires COL:SIZE"
+            maximum_widths+=("$2")
             shift 2
             ;;
         --gap)
@@ -110,6 +118,13 @@ for width in "${minimum_widths[@]}"; do
         || fail "column ${BASH_REMATCH[1]} exceeds --columns $columns"
 done
 
+for width in "${maximum_widths[@]}"; do
+    [[ "$width" =~ ^([1-9][0-9]*):([1-9][0-9]*)$ ]] \
+        || fail "maximum widths must use COL:SIZE with a positive SIZE"
+    (( BASH_REMATCH[1] <= columns )) \
+        || fail "column ${BASH_REMATCH[1]} exceeds --columns $columns"
+done
+
 for width in "${gap_after_widths[@]}"; do
     [[ "$width" =~ ^([1-9][0-9]*):([0-9]+)$ ]] \
         || fail "gap overrides must use COL:SIZE"
@@ -136,6 +151,8 @@ awk \
     -v right_list="$(join_by_comma "${right_columns[@]}")" \
     -v dim_list="$(join_by_comma "${dim_columns[@]}")" \
     -v minimum_list="$(join_by_comma "${minimum_widths[@]}")" \
+    -v maximum_list="$(join_by_comma "${maximum_widths[@]}")" \
+    -v truncation_mark="$TRUNCATION_MARK" \
     -v gap_after_list="$(join_by_comma "${gap_after_widths[@]}")" \
     -v dim_style="$DIM_STYLE" \
     -v reset_style="$RESET_STYLE" '
@@ -197,6 +214,14 @@ awk \
             split(minimum_entries[entry], pair, ":")
             minimum_width[pair[1]] = pair[2]
         }
+        maximum_count = split(maximum_list, maximum_entries, ",")
+        for (entry = 1; entry <= maximum_count; entry++) {
+            if (maximum_entries[entry] == "") {
+                continue
+            }
+            split(maximum_entries[entry], pair, ":")
+            maximum_width[pair[1]] = pair[2]
+        }
         gap_after_count = split(gap_after_list, gap_after_entries, ",")
         for (entry = 1; entry <= gap_after_count; entry++) {
             if (gap_after_entries[entry] == "") {
@@ -242,6 +267,9 @@ awk \
                 for (part = column + 1; part <= part_count; part++) {
                     value = value join_separator parts[part]
                 }
+            }
+            if (column in maximum_width && length(value) > maximum_width[column]) {
+                value = substr(value, 1, maximum_width[column] - length(truncation_mark)) truncation_mark
             }
             cells[row_count, column] = value
             if (length(value) > widths[column]) {
