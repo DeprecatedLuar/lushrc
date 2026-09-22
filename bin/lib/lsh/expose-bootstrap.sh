@@ -105,7 +105,11 @@ expose() {
     main=$(echo "$TMP"/*/bin/lib/lsh/main.sh)
     [[ -f "$main" ]] || die "lsh main.sh not found in tarball"
 
+    # Unset any inherited LIBDIR/SYSDIR: main.sh does LIBDIR="${LIBDIR:-...}" and will trust an
+    # already-exported value over deriving its own path, which breaks a copied-to-tmp run if the
+    # calling shell has lushrc's paths.sh loaded (or stale vars from a prior partial install).
     # hack expose auto-detects the sshd port, starts the tunnel, prints the connect line, blocks.
+    unset LIBDIR SYSDIR
     LSH_INTERACTIVE_SHELL= bash "$main" hack expose "$@"
 }
 
