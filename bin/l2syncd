@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+SYSDIR="${SYSDIR:-$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/system}"
+source "$SYSDIR/shared/gh-install.sh"
+gh_install "l2syncd" "DeprecatedLuar/l2syncd" "$@"
