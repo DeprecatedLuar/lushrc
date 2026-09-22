@@ -10,8 +10,12 @@ ensure_cloudflared() {
 
   echo "  · cloudflared not found, installing..." >&2
 
+  # Redirect the installer's stdout to stderr: this function is called from
+  # inside start_quick_tunnel, which itself runs under a $(...) capture in
+  # hack.sh — any stdout the installer emits would otherwise be swallowed
+  # into the captured tunnel URL and corrupt the printed connect line.
   curl -sSL "https://raw.githubusercontent.com/DeprecatedLuar/the-satellite/main/satellite.sh" | \
-    bash -s -- install cloudflare/cloudflared || {
+    bash -s -- install cloudflare/cloudflared >&2 || {
     echo "error: failed to install cloudflared" >&2
     return 1
   }
