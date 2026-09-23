@@ -46,7 +46,11 @@ lsh_hack_expose() {
         stop=true
         stop_quick_tunnel "$_LSH_HACK_TUNNEL_PID_FILE"
     }
-    trap _lsh_hack_expose_cleanup EXIT INT TERM
+    _lsh_hack_expose_interrupt() {
+        printf '\npress q then enter to exit (Ctrl-C will not stop the tunnel)\n'
+    }
+    trap _lsh_hack_expose_cleanup EXIT TERM
+    trap _lsh_hack_expose_cleanup INT
 
     printf 'starting cloudflare tunnel for port %s\n\n' "$port" >&2
     local public_url
@@ -61,43 +65,52 @@ lsh_hack_expose() {
 
     local line="lsh hack connect ${user}@${host}@${public_url}"
     local interactive=false
-    [[ -t 1 && -z "${NO_COLOR:-}" ]] && interactive=true
+    [[ -t 0 && -t 1 ]] && interactive=true
+    $interactive && trap _lsh_hack_expose_interrupt INT
 
     if $interactive; then
-        printf '\033[34m%s\033[0m\n\n' "$line"
+        if [[ -z "${NO_COLOR:-}" ]]; then
+            printf '\033[34m%s\033[0m\n\n' "$line"
+        else
+            printf '%s\n\n' "$line"
+        fi
     else
         printf '%s\n\n' "$line"
     fi
 
     local can_copy=false
     $interactive && command -v wl-copy >/dev/null 2>&1 && can_copy=true
+    $interactive && printf 'press q then enter to exit\n'
     $can_copy && printf 'press enter to copy\n'
 
     local tunnel_pid=""
     [[ -f "$_LSH_HACK_TUNNEL_PID_FILE" ]] && tunnel_pid=$(cat "$_LSH_HACK_TUNNEL_PID_FILE")
 
-    # Block until interrupted, like `serve`, animating the same "tunnel
-    # active..." spinner as `lsh tunnel`. `read` here is a full-line read
-    # (no -n) rather than a single-char one: -n forces the terminal into a
-    # mode where Ctrl-C arrives as a literal byte instead of raising SIGINT,
-    # which is what made the trap below unreachable. A plain line read keeps
-    # normal signal delivery intact, and doubles as the Enter-to-copy trigger.
+    # Block until explicitly exited, animating the same "tunnel active..."
+    # spinner as `lsh tunnel`. `read` is a full-line read so Ctrl-C remains a
+    # signal handled by _lsh_hack_expose_interrupt, while an empty line still
+    # serves as the Enter-to-copy trigger.
     local dots=""
     while ! $stop && { [[ -z "$tunnel_pid" ]] || kill -0 "$tunnel_pid" 2>/dev/null; }; do
         printf '\rtunnel active%-3s' "$dots"
         dots="${dots}."
         [[ ${#dots} -gt 3 ]] && dots=""
-        if $can_copy; then
+        if $interactive; then
             local key=""
             if read -rs -t 0.3 key; then
-                printf '%s' "$line" | wl-copy 2>/dev/null
-                printf ' (copied)'
+                if [[ "$key" == q || "$key" == Q ]]; then
+                    stop=true
+                elif $can_copy; then
+                    printf '%s' "$line" | wl-copy 2>/dev/null
+                    printf ' (copied)'
+                fi
             fi
         else
             sleep 0.3
         fi
     done
     printf '\r\033[K'
+    _lsh_hack_expose_cleanup
 }
 
 lsh_hack_connect() {

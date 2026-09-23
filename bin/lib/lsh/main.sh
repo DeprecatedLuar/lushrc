@@ -155,7 +155,8 @@ Commands:
 
   lsh hack expose [port]  Expose local sshd (or [port]) via a Cloudflare
                           Quick Tunnel; prints a `lsh hack connect` line to
-                          paste on the other machine. Ctrl-C to stop.
+                          paste on the other machine. Use q then enter to stop;
+                          Ctrl-C shows this hint without stopping the tunnel.
   lsh hack connect <line> Connect using a line printed by `lsh hack expose`
 
 Extras:

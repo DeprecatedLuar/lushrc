@@ -38,7 +38,10 @@ start_quick_tunnel() {
 
   url_file=$(mktemp "${TMPDIR:-/tmp}/cloudflare-tunnel-url.XXXXXX")
 
-  cloudflared tunnel --url "$local_url" > "$url_file" 2>&1 &
+  # Keep the tunnel out of the caller's terminal process group. Otherwise a
+  # Ctrl-C intended for an interactive wrapper also kills cloudflared before
+  # the wrapper can handle it.
+  setsid cloudflared tunnel --url "$local_url" > "$url_file" 2>&1 &
   tunnel_pid=$!
   echo "$tunnel_pid" > "$pid_file"
 
