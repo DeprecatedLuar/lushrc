@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cloudflare-tunnel.sh — shared Cloudflare Quick Tunnel plumbing
-# used by: serve (bin/lib/serve/tunnel.sh), lsh hack (bin/lib/lsh/hack.sh)
+# used by: lsh hack (bin/lib/lsh/hack.sh)
 
 # Ensure cloudflared is installed
 ensure_cloudflared() {
