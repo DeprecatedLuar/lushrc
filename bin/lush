@@ -6,6 +6,9 @@ set -euo pipefail
 BASHRC="${BASHRC:-$HOME/.config/lushrc}"
 SYSDIR="${SYSDIR:-$BASHRC/system}"
 SYS_BIN="$HOME/bin/sys"
+UTILS_REPO="https://github.com/DeprecatedLuar/crazy-useful.git"
+UTILS_DIR="$HOME/.local/src/crazy-useful"
+UTILS_INSTALLER="install.sh"
 
 # --- Tool lifecycle helpers (bin/lib/<tool>/main.sh) ---
 
@@ -52,6 +55,18 @@ lush_rm_one() {
 
     rm -rf "$dir"
     echo "$tool: removed"
+}
+
+lush_setup_utils() {
+    if [[ -d "$UTILS_DIR/.git" ]]; then
+        git -C "$UTILS_DIR" pull --ff-only || return 1
+    else
+        mkdir -p "$(dirname "$UTILS_DIR")"
+        git clone "$UTILS_REPO" "$UTILS_DIR" || return 1
+    fi
+
+    [[ -f "$UTILS_DIR/$UTILS_INSTALLER" ]] || { echo "setup-utils: $UTILS_INSTALLER missing in $UTILS_DIR" >&2; return 1; }
+    bash "$UTILS_DIR/$UTILS_INSTALLER"
 }
 
 case "${1:-help}" in
@@ -134,6 +149,10 @@ case "${1:-help}" in
         exit "$status"
         ;;
 
+    setup-utils)
+        lush_setup_utils
+        ;;
+
     list)
         printf "%-20s %s\n" "TOOL" "STATUS"
         while IFS= read -r tool; do
@@ -157,6 +176,7 @@ Commands:
   install <tool>|-A    - Install a lazily-shipped tool (-A/--all for every one)
   rm <tool> [--force]  - Remove an installed tool's implementation
   list                 - List available/installed tools
+  setup-utils          - Clone/update crazy-useful into ~/.local/src and run its install.sh
   help                 - Show this message
 EOF
         ;;
