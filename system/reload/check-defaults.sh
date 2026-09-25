@@ -5,7 +5,7 @@
 # catch it drifting from what is installed. Silent when every role resolves;
 # one stderr line per role that does not. Never fails reload.
 
-DEFAULT_ROLES="TERMINAL EDITOR VISUAL BROWSER DATA_VIEWER MEDIA_PLAYER AUDIO_PLAYER IMAGE_VIEWER FILEMANAGER LAUNCHER"
+DEFAULT_ROLES="TERMINAL EDITOR VISUAL OPENER BROWSER DATA_VIEWER MEDIA_PLAYER AUDIO_PLAYER IMAGE_VIEWER FILEMANAGER LAUNCHER"
 
 main() {
     local defaults="${LUSHRC_DEFAULTS:-${XDG_DATA_HOME:-$HOME/.local/share}/lushrc/defaults.sh}"

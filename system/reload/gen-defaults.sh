@@ -13,6 +13,7 @@ DEFAULTS_FILE="$DEFAULTS_DIR/defaults.sh"
 # Resolved roles: must land on something real or common tooling breaks.
 TERMINAL_CANDIDATES="kitty ghostty foot alacritty wezterm konsole gnome-terminal xfce4-terminal urxvt st xterm"
 EDITOR_CANDIDATES="micro nvim vim vi nano"
+OPENER_CANDIDATES="xdg-open termux-open open"
 
 # Declared-but-empty roles: no sane machine-independent default exists.
 PLACEHOLDER_ROLES="BROWSER DATA_VIEWER MEDIA_PLAYER AUDIO_PLAYER IMAGE_VIEWER FILEMANAGER LAUNCHER CLIPBOARD"
@@ -32,14 +33,15 @@ pick() {
 }
 
 emit() {
-    local terminal=$1 editor=$2 role
+    local terminal=$1 editor=$2 opener=$3 role
 
     printf '#!/usr/bin/env bash\n'
     printf '# Default program configurations — seeded from what this machine had installed.\n\n'
 
     printf 'export TERMINAL="%s"\n\n' "$terminal"
     printf 'export EDITOR="%s"\n' "$editor"
-    printf 'export VISUAL="%s"\n\n' "$editor"
+    printf 'export VISUAL="%s"\n' "$editor"
+    printf 'export OPENER="%s"\n\n' "$opener"
 
     printf '# Unresolved on this machine — uncomment and fill in as you install them:\n'
     for role in $PLACEHOLDER_ROLES; do
@@ -55,11 +57,12 @@ main() {
 
     mkdir -p "$DEFAULTS_DIR"
 
-    local terminal editor
+    local terminal editor opener
     pick terminal $TERMINAL_CANDIDATES
     pick editor $EDITOR_CANDIDATES
+    pick opener $OPENER_CANDIDATES
 
-    emit "$terminal" "$editor" >"$DEFAULTS_FILE"
+    emit "$terminal" "$editor" "$opener" >"$DEFAULTS_FILE"
 }
 
 main "$@"

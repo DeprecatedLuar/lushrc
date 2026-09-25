@@ -2,8 +2,17 @@
 # cloudflare-tunnel.sh — shared Cloudflare Quick Tunnel plumbing
 # used by: lsh hack (bin/lib/lsh/hack.sh)
 
+# The installer drops binaries here, which a bare-bones remote shell (the
+# expose bootstrap on a fresh box, non-login ssh) often doesn't have on PATH.
+CLOUDFLARED_INSTALL_DIR="$HOME/.local/bin"
+
 # Ensure cloudflared is installed
 ensure_cloudflared() {
+  case ":$PATH:" in
+    *":$CLOUDFLARED_INSTALL_DIR:"*) ;;
+    *) export PATH="$CLOUDFLARED_INSTALL_DIR:$PATH" ;;
+  esac
+
   if command -v cloudflared &>/dev/null; then
     return 0
   fi

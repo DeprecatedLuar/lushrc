@@ -2,6 +2,7 @@
 # lsh hack — temporary SSH access over a Cloudflare Quick Tunnel
 #   lsh hack expose [port]        expose local sshd (or [port]) to the internet
 #   lsh hack connect <line>       connect using a line printed by `expose`
+#   lsh hack oneliner             print the remote bootstrap one-liner
 #
 # shared: net.sh cloudflare-tunnel.sh
 #
@@ -10,6 +11,7 @@
 # plain one.
 
 _LSH_HACK_TUNNEL_PID_FILE="${TMPDIR:-/tmp}/lsh-hack-tunnel.pid"
+_LSH_HACK_BOOTSTRAP_URL="https://raw.githubusercontent.com/DeprecatedLuar/lushrc/main/bin/lib/lsh/expose-bootstrap.sh"
 
 _lsh_hack_port_listening() {
     (: < "/dev/tcp/127.0.0.1/$1") &>/dev/null
@@ -152,6 +154,10 @@ lsh_hack_connect() {
     lsh_exec_ssh "$_RAW_SSH" "${ssh_args[@]}"
 }
 
+lsh_hack_oneliner() {
+    printf 'bash <(curl -fsSL %s)\n' "$_LSH_HACK_BOOTSTRAP_URL"
+}
+
 lsh_hack() {
     case "$1" in
         expose)
@@ -162,8 +168,11 @@ lsh_hack() {
             shift
             lsh_hack_connect "$@"
             ;;
+        oneliner)
+            lsh_hack_oneliner
+            ;;
         *)
-            echo "Usage: lsh hack expose [port] | lsh hack connect <line>" >&2
+            echo "Usage: lsh hack expose [port] | lsh hack connect <line> | lsh hack oneliner" >&2
             return 1
             ;;
     esac
