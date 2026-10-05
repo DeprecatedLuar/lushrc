@@ -8,6 +8,10 @@
 
 _LSH_CONNECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+LSH_PREFLIGHT_OK=0
+LSH_PREFLIGHT_UNRESOLVED=1
+LSH_PREFLIGHT_SSH_FAILED=2
+
 lsh_is_plain_connection() {
     [[ $# -eq 1 && "$1" != -* ]]
 }
@@ -15,24 +19,43 @@ lsh_is_plain_connection() {
 # Accept targets that resolve normally, plus SSH config aliases whose HostName
 # rewrites the name. This is intentionally a preflight only: it does not open a
 # connection or require the SSH port to be reachable.
+#
+# Exit status separates the two ways a preflight fails: the target is
+# unresolvable ($LSH_PREFLIGHT_UNRESOLVED), or ssh could not evaluate the
+# target at all ($LSH_PREFLIGHT_SSH_FAILED) — a broken config or unreadable
+# key file, where ssh's own diagnostic is the only useful message.
 lsh_target_is_valid() {
     local raw_ssh=$1
     local target=$2
-    local requested_host effective_host config
+    local requested_host effective_host config errfile status
 
     requested_host=${target##*@}
     requested_host=${requested_host#[}
     requested_host=${requested_host%]}
 
-    config=$("$raw_ssh" -G -- "$target" 2>/dev/null) || return 1
+    errfile=$(mktemp "${TMPDIR:-/tmp}/lsh-preflight-$USER.XXXXXX") || {
+        printf 'lsh: cannot create a temp file in %s\n' "${TMPDIR:-/tmp}" >&2
+        return $LSH_PREFLIGHT_SSH_FAILED
+    }
+    config=$("$raw_ssh" -G -- "$target" 2>"$errfile")
+    status=$?
+    if (( status != 0 )); then
+        while IFS= read -r line; do
+            printf 'lsh: %s\n' "$line" >&2
+        done < "$errfile"
+        rm -f "$errfile"
+        return $LSH_PREFLIGHT_SSH_FAILED
+    fi
+    rm -f "$errfile"
+
     effective_host=$(awk 'tolower($1) == "hostname" { print $2; exit }' <<< "$config")
-    [[ -n $effective_host ]] || return 1
+    [[ -n $effective_host ]] || return $LSH_PREFLIGHT_UNRESOLVED
 
     # A different effective HostName means SSH matched a configured alias.
-    [[ ${effective_host,,} != ${requested_host,,} ]] && return 0
+    [[ ${effective_host,,} != ${requested_host,,} ]] && return $LSH_PREFLIGHT_OK
 
-    command -v getent >/dev/null 2>&1 || return 0
-    getent ahosts "$effective_host" >/dev/null 2>&1
+    command -v getent >/dev/null 2>&1 || return $LSH_PREFLIGHT_OK
+    getent ahosts "$effective_host" >/dev/null 2>&1 || return $LSH_PREFLIGHT_UNRESOLVED
 }
 
 lsh_has_compatible_term() {

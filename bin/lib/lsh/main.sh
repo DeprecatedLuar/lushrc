@@ -213,8 +213,14 @@ fi
 
 if $SMART_CONNECTION; then
     TARGET=${ARGS[${#ARGS[@]}-1]}
-    if ! lsh_target_is_valid "$_RAW_SSH" "$TARGET"; then
+    lsh_target_is_valid "$_RAW_SSH" "$TARGET"
+    PREFLIGHT=$?
+    if (( PREFLIGHT == LSH_PREFLIGHT_UNRESOLVED )); then
         printf "lsh: '%s' is neither a command nor a resolvable SSH host\n" "$TARGET" >&2
+        exit 2
+    elif (( PREFLIGHT != LSH_PREFLIGHT_OK )); then
+        # ssh reported why it could not evaluate the target; restating it here
+        # would only bury the real cause.
         exit 2
     fi
 
