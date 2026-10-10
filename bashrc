@@ -162,9 +162,6 @@ umask 002
 # Generated for envman. Do not edit.
 [ -s "$HOME/.config/envman/load.sh" ] && source "$HOME/.config/envman/load.sh"
 
-# Qt theme configuration
-export QT_QPA_PLATFORMTHEME=qt5ct
-
 # =====================================================
 # INTERACTIVE ONLY
 # =====================================================
