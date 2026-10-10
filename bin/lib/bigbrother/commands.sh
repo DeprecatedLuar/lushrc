@@ -531,9 +531,36 @@ bigbrother_finalize_add() {
     bigbrother_enable_now "$name" || return 1
 }
 
+# Runs one single-name verb over every argument, continuing past failures so
+# a bad name never blocks the rest; fails if any name failed.
+bigbrother_each() {
+    local verb="$1"
+    shift
+    (($# > 0)) || { echo "Usage: bigbrother $verb <name>..." >&2; return 1; }
+    local name failed=0
+    for name in "$@"; do
+        "bigbrother_${verb}_one" "$name" || failed=1
+    done
+    return "$failed"
+}
+
+bigbrother_cmd_enable()  { bigbrother_each enable "$@"; }
+bigbrother_cmd_disable() { bigbrother_each disable "$@"; }
+bigbrother_cmd_stop()    { bigbrother_each stop "$@"; }
+bigbrother_cmd_restart() { bigbrother_each restart "$@"; }
+
+# A bulk removal is confirmed once up front; a single name is not.
 bigbrother_cmd_rm() {
-    local name="${1:-}"
-    [[ -z "$name" ]] && { echo "Usage: bigbrother rm <name>" >&2; return 1; }
+    if (($# > 1)); then
+        local answer
+        read -r -p "bigbrother: remove $*? [y/N] " answer || answer=""
+        [[ "$answer" =~ ^[Yy]$ ]] || { echo "bigbrother: aborted" >&2; return 1; }
+    fi
+    bigbrother_each rm "$@"
+}
+
+bigbrother_rm_one() {
+    local name="$1"
 
     # A transient unit has no file to delete — stopping it *is* removing it.
     # Without this branch a name `ls` shows can't be removed at all.
@@ -567,9 +594,8 @@ bigbrother_cmd_rm() {
     bigbrother_daemon_reload
 }
 
-bigbrother_cmd_enable() {
-    local name="${1:-}"
-    [[ -z "$name" ]] && { echo "Usage: bigbrother enable <name>" >&2; return 1; }
+bigbrother_enable_one() {
+    local name="$1"
     bigbrother_ensure_linger
 
     if ! bigbrother_is_defined "$name"; then
@@ -584,16 +610,15 @@ bigbrother_cmd_enable() {
     bigbrother_enable_now "$name" || return 1
 }
 
-bigbrother_cmd_disable() {
-    local name="${1:-}"
-    [[ -z "$name" ]] && { echo "Usage: bigbrother disable <name>" >&2; return 1; }
+bigbrother_disable_one() {
+    local name="$1"
     bigbrother_is_defined "$name" || { echo "bigbrother: '$name' is not defined" >&2; return 1; }
     bigbrother_disable_now "$name"
 }
 
 # Gates on *running*, never on *enabled* — an enabled-but-stopped service is
 # exactly the case `run` should start, since there is deliberately no
-# separate `start` verb (see bigbrother_cmd_stop). Already-live is a no-op
+# separate `start` verb (see bigbrother_stop_one). Already-live is a no-op
 # success, not an error: `run` means "make it live", so finding it live
 # already isn't a failure.
 bigbrother_cmd_run() {
@@ -639,9 +664,8 @@ bigbrother_cmd_run() {
 # Never touches enablement — stopping an enabled service just takes it down
 # for now; it still comes back at boot (`bb ls` marks that '!'). Stopping a
 # transient destroys it for good, since it has no unit file to fall back to.
-bigbrother_cmd_stop() {
-    local name="${1:-}"
-    [[ -z "$name" ]] && { echo "Usage: bigbrother stop <name>" >&2; return 1; }
+bigbrother_stop_one() {
+    local name="$1"
 
     if ! bigbrother_is_defined "$name"; then
         bigbrother_is_transient "$name" 2>/dev/null || {
@@ -665,9 +689,8 @@ bigbrother_cmd_stop() {
     bigbrother_reset_failed "$name"
 }
 
-bigbrother_cmd_restart() {
-    local name="${1:-}"
-    [[ -z "$name" ]] && { echo "Usage: bigbrother restart <name>" >&2; return 1; }
+bigbrother_restart_one() {
+    local name="$1"
     bigbrother_restart "$name"
 }
 

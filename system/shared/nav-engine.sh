@@ -86,9 +86,9 @@ expand_index() {
         doc/*) echo "${DOCUMENTS:-$HOME/Documents}/${1#doc/}" ;;
         trash/*) echo "$TRASH_DIR/${1#trash/}" ;;
         med/*|m/*|media/*) echo "${MEDIA:-$HOME/Media}/${1#*/}" ;;
-        pic/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures/${1#pic/}" ;;
-        vid/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos/${1#vid/}" ;;
-        wpp/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers/${1#wpp/}" ;;
+        pic/*|vid/*) echo "${MEDIA:-$HOME/Media}/${1#*/}" ;;
+        wpp/*) echo "${MEDIA:-$HOME/Media}/wallpapers/${1#wpp/}" ;;
+        gallery/*) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/${1#gallery/}" ;;
         l/*)   echo "$HOME/.local/${1#l/}" ;;
         src/*) echo "$HOME/.local/src/${1#src/}" ;;
         state/*) echo "${XDG_STATE_HOME:-$HOME/.local/state}/${1#state/}" ;;
@@ -119,9 +119,9 @@ expand_index() {
         doc)   echo "${DOCUMENTS:-$HOME/Documents}" ;;
         trash) echo "$TRASH_DIR" ;;
         med|m|media) echo "${MEDIA:-$HOME/Media}" ;;
-        pic)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/pictures" ;;
-        vid)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/videos" ;;
-        wpp)   echo "${MEDIA_GALLERY:-$HOME/Media/gallery}/wallpapers" ;;
+        pic|vid) echo "${MEDIA:-$HOME/Media}" ;;
+        wpp)   echo "${MEDIA:-$HOME/Media}/wallpapers" ;;
+        gallery) echo "${MEDIA_GALLERY:-$HOME/Media/gallery}" ;;
         l)     echo "$HOME/.local" ;;
         src)   echo "$HOME/.local/src" ;;
         state) echo "${XDG_STATE_HOME:-$HOME/.local/state}" ;;
